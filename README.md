@@ -3,6 +3,7 @@
 MLBV1 is a production-ready pipeline for MLB spread prediction using modular data ingestion, feature engineering, and scikit-learn models. It includes a full testing suite, Dockerization, CI/CD, and Azure infrastructure templates.
 
 ## Features
+
 - Pluggable data loaders (Odds API, Action Network, BetsAPI, CSV/JSON, synthetic)
 - Feature engineering (team stats, trends, rest days, weather)
 - Dual model training (RandomForest and LogisticRegression)
@@ -11,6 +12,7 @@ MLBV1 is a production-ready pipeline for MLB spread prediction using modular dat
 - Azure deployment via Bicep
 
 ## Requirements
+
 - Python 3.11+
 
 ## Installation
@@ -36,6 +38,7 @@ python scripts/predict.py --model-path artifacts/models/random_forest.pkl --load
 ```
 
 ## Configuration
+
 Configuration can be supplied via JSON file or environment variables.
 
 ```bash
@@ -52,8 +55,8 @@ Example JSON:
   },
   "model": {
     "type": "both",
-    "random_forest": {"n_estimators": 300, "max_depth": 8},
-    "logistic_regression": {"C": 1.0}
+    "random_forest": { "n_estimators": 300, "max_depth": 8 },
+    "logistic_regression": { "C": 1.0 }
   }
 }
 ```
@@ -79,6 +82,7 @@ docker run --rm mlbv1:latest
 ```
 
 ## Azure Deployment
+
 The Bicep template is in [infra/main.bicep](infra/main.bicep). Deploy using:
 
 ```bash
@@ -97,4 +101,5 @@ mlb_gbsv_local_v1.0/
 ```
 
 ## License
+
 MIT

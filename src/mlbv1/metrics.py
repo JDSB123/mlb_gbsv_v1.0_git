@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 import numpy as np
-import pandas as pd
 
 
 @dataclass(frozen=True)
@@ -27,7 +26,10 @@ def accuracy_score(y_true: Iterable[int], y_pred: Iterable[int]) -> float:
 
 
 def roi_on_spread(
-    y_true: Iterable[int], y_pred: Iterable[int], stake: float = 100.0, vig: float = -110
+    y_true: Iterable[int],
+    y_pred: Iterable[int],
+    stake: float = 100.0,
+    vig: float = -110,
 ) -> float:
     y_true_arr = np.array(list(y_true))
     y_pred_arr = np.array(list(y_pred))

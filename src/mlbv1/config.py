@@ -2,10 +2,45 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import json
 import os
-from typing import Any, Dict, Optional
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+
+def _load_dotenv(dotenv_path: str | None = None) -> None:
+    """Read a .env file and inject into os.environ (no dependency needed)."""
+    path = Path(dotenv_path) if dotenv_path else Path.cwd() / ".env"
+    if not path.exists():
+        return
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip("'\"")
+            os.environ.setdefault(key, value)
+
+
+# Auto-load .env on import so every module sees the vars.
+_load_dotenv()
+
+
+# Map loader names to their env-var key names.
+_LOADER_API_KEY_MAP: dict[str, str] = {
+    "odds_api": "ODDS_API_KEY",
+    "action_network": "ACTION_NETWORK_PASSWORD",
+    "bets_api": "BETS_API_KEY",
+}
+
+_LOADER_BASE_URL_MAP: dict[str, str] = {
+    "odds_api": "https://api.the-odds-api.com/v4",
+    "action_network": "https://api.actionnetwork.com/v1",
+    "bets_api": "https://api.betsapi.com",
+}
 
 
 @dataclass(frozen=True)
@@ -13,7 +48,7 @@ class RandomForestConfig:
     """RandomForest model parameters."""
 
     n_estimators: int = 300
-    max_depth: Optional[int] = 8
+    max_depth: int | None = 8
     min_samples_split: int = 2
     min_samples_leaf: int = 1
     random_state: int = 42
@@ -34,7 +69,9 @@ class ModelConfig:
 
     type: str = "both"
     random_forest: RandomForestConfig = field(default_factory=RandomForestConfig)
-    logistic_regression: LogisticRegressionConfig = field(default_factory=LogisticRegressionConfig)
+    logistic_regression: LogisticRegressionConfig = field(
+        default_factory=LogisticRegressionConfig
+    )
 
 
 @dataclass(frozen=True)
@@ -42,9 +79,9 @@ class DataConfig:
     """Data ingestion configuration."""
 
     loader: str = "synthetic"
-    input_path: Optional[str] = None
-    api_key: Optional[str] = None
-    api_base_url: Optional[str] = None
+    input_path: str | None = None
+    api_key: str | None = None
+    api_base_url: str | None = None
 
 
 @dataclass(frozen=True)
@@ -64,10 +101,12 @@ class AppConfig:
     features: FeatureConfig = field(default_factory=FeatureConfig)
 
     @staticmethod
-    def _from_dict(payload: Dict[str, Any]) -> "AppConfig":
+    def _from_dict(payload: dict[str, Any]) -> AppConfig:
         data_cfg = DataConfig(**payload.get("data", {}))
         rf_cfg = RandomForestConfig(**payload.get("model", {}).get("random_forest", {}))
-        lr_cfg = LogisticRegressionConfig(**payload.get("model", {}).get("logistic_regression", {}))
+        lr_cfg = LogisticRegressionConfig(
+            **payload.get("model", {}).get("logistic_regression", {})
+        )
         model_cfg = ModelConfig(
             type=payload.get("model", {}).get("type", "both"),
             random_forest=rf_cfg,
@@ -76,7 +115,7 @@ class AppConfig:
         feature_cfg = FeatureConfig(**payload.get("features", {}))
         return AppConfig(data=data_cfg, model=model_cfg, features=feature_cfg)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize config to a dictionary."""
         return {
             "data": {
@@ -97,8 +136,8 @@ class AppConfig:
         }
 
     def override(
-        self, data: Optional[Dict[str, Any]] = None, model: Optional[Dict[str, Any]] = None
-    ) -> "AppConfig":
+        self, data: dict[str, Any] | None = None, model: dict[str, Any] | None = None
+    ) -> AppConfig:
         """Return a new config with overrides applied."""
         payload = self.to_dict()
         if data:
@@ -108,19 +147,28 @@ class AppConfig:
         return AppConfig._from_dict(payload)
 
     @classmethod
-    def load(cls, config_path: Optional[str] = None) -> "AppConfig":
+    def load(cls, config_path: str | None = None) -> AppConfig:
         """Load configuration from JSON file or environment variables."""
         if config_path:
-            with open(config_path, "r", encoding="utf-8") as handle:
+            with open(config_path, encoding="utf-8") as handle:
                 payload = json.load(handle)
             return cls._from_dict(payload)
 
-        env_payload: Dict[str, Any] = {
+        loader = os.getenv("MLB_LOADER", "synthetic")
+        # Resolve the correct API key for the selected loader.
+        api_key = os.getenv("MLB_API_KEY") or os.getenv(
+            _LOADER_API_KEY_MAP.get(loader, ""), ""
+        )
+        api_base_url = os.getenv("MLB_API_BASE_URL") or _LOADER_BASE_URL_MAP.get(
+            loader, ""
+        )
+
+        env_payload: dict[str, Any] = {
             "data": {
-                "loader": os.getenv("MLB_LOADER", "synthetic"),
+                "loader": loader,
                 "input_path": os.getenv("MLB_INPUT_PATH"),
-                "api_key": os.getenv("MLB_API_KEY"),
-                "api_base_url": os.getenv("MLB_API_BASE_URL"),
+                "api_key": api_key,
+                "api_base_url": api_base_url,
             },
             "model": {
                 "type": os.getenv("MLB_MODEL_TYPE", "both"),

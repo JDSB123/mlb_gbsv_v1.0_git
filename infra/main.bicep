@@ -1,7 +1,7 @@
 param location string = 'eastus'
 param namePrefix string = 'mlb-gbsv-v1-az'
 
-var acrName = '${namePrefix}-acr'
+var acrName = replace('${namePrefix}-acr', '-', '')
 var storageName = replace('${namePrefix}-sto', '-', '')
 var kvName = '${namePrefix}-kv'
 var acaEnvName = '${namePrefix}-acaenv'
@@ -68,7 +68,7 @@ resource acaApp 'Microsoft.App/containerApps@2023-05-01' = {
       secrets: [
         {
           name: 'acr-password'
-          value: listCredentials(acr.id, acr.apiVersion).passwords[0].value
+          value: acr.listCredentials().passwords[0].value
         }
       ]
     }
@@ -78,8 +78,8 @@ resource acaApp 'Microsoft.App/containerApps@2023-05-01' = {
           name: 'mlbv1'
           image: '${acr.properties.loginServer}/mlbv1:latest'
           resources: {
-            cpu: 0.5
-            memory: '1Gi'
+            cpu: 1
+            memory: '2Gi'
           }
         }
       ]

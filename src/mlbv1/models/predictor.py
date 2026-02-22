@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import pickle
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 import pandas as pd
 
@@ -36,7 +35,9 @@ def predict(model: TrainedModel, X: pd.DataFrame) -> PredictionResult:
     """Generate predictions and probabilities."""
     features = X[model.feature_names]
     if model.scaler:
-        features = pd.DataFrame(model.scaler.transform(features), columns=model.feature_names)
+        features = pd.DataFrame(
+            model.scaler.transform(features), columns=model.feature_names
+        )
     preds = pd.Series(model.model.predict(features), index=X.index)
     proba = pd.Series(model.model.predict_proba(features)[:, 1], index=X.index)
     return PredictionResult(predictions=preds, probabilities=proba)

@@ -31,11 +31,20 @@ def build_loader(config: AppConfig):
             raise ValueError("JSON loader requires input_path")
         return JSONLoader(config.data.input_path)
     if loader == "odds_api":
-        return OddsAPILoader(config.data.api_base_url or "https://api.the-odds-api.com", config.data.api_key or "")
+        return OddsAPILoader(
+            config.data.api_base_url or "https://api.the-odds-api.com",
+            config.data.api_key or "",
+        )
     if loader == "action_network":
-        return ActionNetworkLoader(config.data.api_base_url or "https://api.actionnetwork.com", config.data.api_key or "")
+        return ActionNetworkLoader(
+            config.data.api_base_url or "https://api.actionnetwork.com",
+            config.data.api_key or "",
+        )
     if loader == "bets_api":
-        return BetsAPILoader(config.data.api_base_url or "https://api.betsapi.com", config.data.api_key or "")
+        return BetsAPILoader(
+            config.data.api_base_url or "https://api.betsapi.com",
+            config.data.api_key or "",
+        )
     raise ValueError(f"Unsupported loader: {loader}")
 
 
@@ -43,7 +52,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run MLB spread predictions")
     parser.add_argument("--config", type=str, default=None, help="Path to config JSON")
     parser.add_argument("--loader", type=str, default=None, help="Override loader")
-    parser.add_argument("--model-path", type=str, required=True, help="Path to model file")
+    parser.add_argument(
+        "--model-path", type=str, required=True, help="Path to model file"
+    )
     args = parser.parse_args()
 
     config = AppConfig.load(args.config)

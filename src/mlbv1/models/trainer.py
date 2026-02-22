@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
+import pickle
 from dataclasses import dataclass
 from pathlib import Path
-import pickle
-from typing import Dict, Tuple
+from typing import Any, Protocol
 
-import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
@@ -17,12 +16,22 @@ from sklearn.preprocessing import StandardScaler
 from mlbv1.config import LogisticRegressionConfig, RandomForestConfig
 
 
+class ClassifierLike(Protocol):
+    """Protocol for classifiers supporting probability predictions."""
+
+    def predict(self, X: Any) -> Any:  # noqa: ANN401 - sklearn compatibility
+        ...
+
+    def predict_proba(self, X: Any) -> Any:  # noqa: ANN401 - sklearn compatibility
+        ...
+
+
 @dataclass(frozen=True)
 class TrainedModel:
     """Container for trained model artifacts."""
 
     name: str
-    model: object
+    model: ClassifierLike
     scaler: StandardScaler | None
     feature_names: list[str]
 
@@ -45,7 +54,12 @@ class ModelTrainer:
             random_state=config.random_state,
         )
         model.fit(X, y)
-        return TrainedModel(name="random_forest", model=model, scaler=None, feature_names=list(X.columns))
+        return TrainedModel(
+            name="random_forest",
+            model=model,
+            scaler=None,
+            feature_names=list(X.columns),
+        )
 
     def train_logistic_regression(
         self, X: pd.DataFrame, y: pd.Series, config: LogisticRegressionConfig
@@ -59,7 +73,10 @@ class ModelTrainer:
         )
         model.fit(X_scaled, y)
         return TrainedModel(
-            name="logistic_regression", model=model, scaler=scaler, feature_names=list(X.columns)
+            name="logistic_regression",
+            model=model,
+            scaler=scaler,
+            feature_names=list(X.columns),
         )
 
     def evaluate(self, model: TrainedModel, X: pd.DataFrame, y: pd.Series) -> float:
@@ -81,7 +98,7 @@ class ModelTrainer:
         y: pd.Series,
         rf_config: RandomForestConfig,
         lr_config: LogisticRegressionConfig,
-    ) -> Dict[str, TrainedModel]:
+    ) -> dict[str, TrainedModel]:
         models = {
             "random_forest": self.train_random_forest(X, y, rf_config),
             "logistic_regression": self.train_logistic_regression(X, y, lr_config),
