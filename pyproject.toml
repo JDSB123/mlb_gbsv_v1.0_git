@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mlbv1"
-version = "0.1.0"
-description = "MLB spread prediction pipeline"
+version = "0.2.0"
+description = "MLB spread prediction pipeline — robust ensemble with tracking, alerts & dashboard"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -14,10 +14,27 @@ dependencies = [
   "numpy>=1.26.0",
   "pandas>=2.1.0",
   "scikit-learn>=1.4.0",
+  "xgboost>=2.0.0",
+  "lightgbm>=4.0.0",
+]
+
+[project.optional-dependencies]
+dashboard = [
+  "streamlit>=1.30.0",
+  "plotly>=5.18.0",
+]
+dev = [
   "pytest>=8.0.0",
   "ruff>=0.4.0",
   "mypy>=1.8.0",
+  "pandas-stubs>=2.1.0",
 ]
+all = ["mlbv1[dashboard,dev]"]
+
+[project.scripts]
+mlbv1-train = "mlbv1.cli:train_cli"
+mlbv1-predict = "mlbv1.cli:predict_cli"
+mlbv1-dashboard = "mlbv1.dashboard.app:main"
 
 [project.urls]
 Homepage = "https://github.com/jdsb123/mlb_gbsv_v1.0_git"

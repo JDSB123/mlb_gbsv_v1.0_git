@@ -20,11 +20,12 @@ def engineer_features(
 ) -> FeatureSet:
     """Generate model features from game data."""
     data = df.copy()
-    data = data.sort_values("game_date")
+    data = data.sort_values("game_date").reset_index(drop=True)
 
     data["home_win"] = (data["home_score"] > data["away_score"]).astype(int)
     data["away_win"] = (data["away_score"] > data["home_score"]).astype(int)
 
+    # Vectorised rolling stats via groupby().transform() — O(n) per group
     data["home_win_rate_short"] = _rolling_team_stat(
         data, "home_team", "home_win", window=short_window
     )
@@ -44,6 +45,25 @@ def engineer_features(
     data["away_runs_avg_short"] = _rolling_team_stat(
         data, "away_team", "away_score", window=short_window
     )
+
+    # Additional robust features
+    data["home_runs_avg_long"] = _rolling_team_stat(
+        data, "home_team", "home_score", window=long_window
+    )
+    data["away_runs_avg_long"] = _rolling_team_stat(
+        data, "away_team", "away_score", window=long_window
+    )
+
+    # Win-rate differential (home advantage signal)
+    data["win_rate_diff_short"] = data["home_win_rate_short"] - data["away_win_rate_short"]
+    data["win_rate_diff_long"] = data["home_win_rate_long"] - data["away_win_rate_long"]
+
+    # Runs differential
+    data["runs_diff_short"] = data["home_runs_avg_short"] - data["away_runs_avg_short"]
+
+    # Moneyline-implied probability
+    data["home_implied_prob"] = data["home_moneyline"].apply(_ml_to_implied_prob)
+    data["away_implied_prob"] = data["away_moneyline"].apply(_ml_to_implied_prob)
 
     data["rest_days_home"] = _rest_days(data, "home_team")
     data["rest_days_away"] = _rest_days(data, "away_team")
@@ -68,6 +88,13 @@ def engineer_features(
         "away_win_rate_long",
         "home_runs_avg_short",
         "away_runs_avg_short",
+        "home_runs_avg_long",
+        "away_runs_avg_long",
+        "win_rate_diff_short",
+        "win_rate_diff_long",
+        "runs_diff_short",
+        "home_implied_prob",
+        "away_implied_prob",
         "rest_days_home",
         "rest_days_away",
         "temp_f",
@@ -85,28 +112,41 @@ def engineer_features(
     return FeatureSet(X=X, feature_names=feature_cols)
 
 
+# ---------------------------------------------------------------------------
+# Vectorised helpers
+# ---------------------------------------------------------------------------
+
+
 def _rolling_team_stat(
     df: pd.DataFrame, team_col: str, value_col: str, window: int
 ) -> pd.Series:
-    values = []
-    for idx, row in df.iterrows():
-        team = row[team_col]
-        history = df.loc[:idx, :]
-        team_history = history[history[team_col] == team][value_col]
-        values.append(team_history.tail(window).mean())
-    return pd.Series(values, index=df.index).fillna(0.0)
+    """Vectorised per-team rolling mean using groupby + rolling.
+
+    ``shift(1)`` ensures we only use *prior* games (no look-ahead).
+    """
+    return (
+        df.groupby(team_col)[value_col]
+        .transform(lambda s: s.shift(1).rolling(window, min_periods=1).mean())
+        .fillna(0.0)
+    )
 
 
 def _rest_days(df: pd.DataFrame, team_col: str) -> pd.Series:
-    last_game_date: dict[str, pd.Timestamp] = {}
-    rest_days = []
-    for _, row in df.iterrows():
-        team = row[team_col]
-        game_date = row["game_date"]
-        if team not in last_game_date:
-            rest_days.append(3.0)
-        else:
-            delta = (game_date - last_game_date[team]).days
-            rest_days.append(float(max(delta, 0)))
-        last_game_date[team] = game_date
-    return pd.Series(rest_days, index=df.index)
+    """Vectorised rest-day calculation using groupby + diff."""
+    # Convert to numeric for diff
+    numeric_dates = df["game_date"].astype("int64") // 10**9  # seconds
+    rest = (
+        df.assign(_ts=numeric_dates)
+        .groupby(team_col)["_ts"]
+        .transform(lambda s: s.diff() / 86400)  # seconds → days
+    )
+    return rest.fillna(3.0).clip(lower=0.0)
+
+
+def _ml_to_implied_prob(ml: float) -> float:
+    """American moneyline → implied probability."""
+    if ml == 0:
+        return 0.5
+    if ml < 0:
+        return abs(ml) / (abs(ml) + 100)
+    return 100 / (ml + 100)

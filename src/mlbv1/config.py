@@ -64,14 +64,87 @@ class LogisticRegressionConfig:
 
 
 @dataclass(frozen=True)
+class XGBoostConfig:
+    """XGBoost model parameters."""
+
+    n_estimators: int = 300
+    max_depth: int = 6
+    learning_rate: float = 0.1
+    subsample: float = 0.8
+    colsample_bytree: float = 0.8
+    min_child_weight: int = 3
+    gamma: float = 0.1
+    reg_alpha: float = 0.01
+    reg_lambda: float = 1.0
+    random_state: int = 42
+    use_label_encoder: bool = False
+    eval_metric: str = "logloss"
+
+
+@dataclass(frozen=True)
+class LightGBMConfig:
+    """LightGBM model parameters."""
+
+    n_estimators: int = 300
+    max_depth: int = 6
+    learning_rate: float = 0.1
+    subsample: float = 0.8
+    colsample_bytree: float = 0.8
+    min_child_samples: int = 20
+    reg_alpha: float = 0.01
+    reg_lambda: float = 1.0
+    num_leaves: int = 31
+    random_state: int = 42
+    verbose: int = -1
+
+
+@dataclass(frozen=True)
+class TuningConfig:
+    """Hyperparameter tuning settings."""
+
+    enabled: bool = False
+    cv_folds: int = 5
+    scoring: str = "accuracy"
+    n_jobs: int = -1
+
+
+@dataclass(frozen=True)
+class AlertConfig:
+    """Alert / notification settings (populated from env vars)."""
+
+    discord_webhook_url: str = ""
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_to: str = ""
+
+    @classmethod
+    def from_env(cls) -> AlertConfig:
+        return cls(
+            discord_webhook_url=os.getenv("DISCORD_WEBHOOK_URL", ""),
+            smtp_host=os.getenv("SMTP_HOST", ""),
+            smtp_port=int(os.getenv("SMTP_PORT", "587")),
+            smtp_user=os.getenv("SMTP_USER", ""),
+            smtp_password=os.getenv("SMTP_PASSWORD", ""),
+            smtp_from=os.getenv("SMTP_FROM", ""),
+            smtp_to=os.getenv("SMTP_TO", ""),
+        )
+
+
+@dataclass(frozen=True)
 class ModelConfig:
     """Model configuration."""
 
-    type: str = "both"
+    type: str = "all"
     random_forest: RandomForestConfig = field(default_factory=RandomForestConfig)
     logistic_regression: LogisticRegressionConfig = field(
         default_factory=LogisticRegressionConfig
     )
+    xgboost: XGBoostConfig = field(default_factory=XGBoostConfig)
+    lightgbm: LightGBMConfig = field(default_factory=LightGBMConfig)
+    tuning: TuningConfig = field(default_factory=TuningConfig)
 
 
 @dataclass(frozen=True)
@@ -99,6 +172,7 @@ class AppConfig:
     data: DataConfig = field(default_factory=DataConfig)
     model: ModelConfig = field(default_factory=ModelConfig)
     features: FeatureConfig = field(default_factory=FeatureConfig)
+    alerts: AlertConfig = field(default_factory=AlertConfig)
 
     @staticmethod
     def _from_dict(payload: dict[str, Any]) -> AppConfig:
@@ -107,13 +181,23 @@ class AppConfig:
         lr_cfg = LogisticRegressionConfig(
             **payload.get("model", {}).get("logistic_regression", {})
         )
+        xgb_raw = payload.get("model", {}).get("xgboost", {})
+        xgb_cfg = XGBoostConfig(**xgb_raw) if xgb_raw else XGBoostConfig()
+        lgbm_raw = payload.get("model", {}).get("lightgbm", {})
+        lgbm_cfg = LightGBMConfig(**lgbm_raw) if lgbm_raw else LightGBMConfig()
+        tuning_raw = payload.get("model", {}).get("tuning", {})
+        tuning_cfg = TuningConfig(**tuning_raw) if tuning_raw else TuningConfig()
         model_cfg = ModelConfig(
-            type=payload.get("model", {}).get("type", "both"),
+            type=payload.get("model", {}).get("type", "all"),
             random_forest=rf_cfg,
             logistic_regression=lr_cfg,
+            xgboost=xgb_cfg,
+            lightgbm=lgbm_cfg,
+            tuning=tuning_cfg,
         )
         feature_cfg = FeatureConfig(**payload.get("features", {}))
-        return AppConfig(data=data_cfg, model=model_cfg, features=feature_cfg)
+        alert_cfg = AlertConfig.from_env()
+        return AppConfig(data=data_cfg, model=model_cfg, features=feature_cfg, alerts=alert_cfg)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize config to a dictionary."""
@@ -128,6 +212,9 @@ class AppConfig:
                 "type": self.model.type,
                 "random_forest": self.model.random_forest.__dict__,
                 "logistic_regression": self.model.logistic_regression.__dict__,
+                "xgboost": self.model.xgboost.__dict__,
+                "lightgbm": self.model.lightgbm.__dict__,
+                "tuning": self.model.tuning.__dict__,
             },
             "features": {
                 "rolling_window_short": self.features.rolling_window_short,
@@ -171,7 +258,7 @@ class AppConfig:
                 "api_base_url": api_base_url,
             },
             "model": {
-                "type": os.getenv("MLB_MODEL_TYPE", "both"),
+                "type": os.getenv("MLB_MODEL_TYPE", "all"),
             },
         }
         return cls._from_dict(env_payload)

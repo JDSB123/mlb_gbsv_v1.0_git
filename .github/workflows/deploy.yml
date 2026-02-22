@@ -1,0 +1,84 @@
+name: Deploy
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "src/**"
+      - "scripts/**"
+      - "Dockerfile"
+      - "pyproject.toml"
+      - "infra/**"
+
+env:
+  ACR_NAME: mlbgbsvv1azacr
+  IMAGE_NAME: mlbv1
+  RESOURCE_GROUP: mlb-gbsv-v1-az-rg
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[all]"
+      - name: Ruff
+        run: ruff check src tests scripts
+      - name: Mypy
+        run: mypy src
+      - name: Pytest
+        run: pytest --tb=short -q
+
+  build-and-push:
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: ACR Login
+        run: az acr login --name ${{ env.ACR_NAME }}
+
+      - name: Build & Push Docker image
+        run: |
+          TAG=${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          LATEST=${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
+          docker build -t $TAG -t $LATEST .
+          docker push $TAG
+          docker push $LATEST
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy Bicep
+        run: |
+          az deployment group create \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --template-file infra/main.bicep \
+            --parameters namePrefix=mlb-gbsv-v1-az
+
+      - name: Update Container App image
+        run: |
+          az containerapp update \
+            --name mlb-gbsv-v1-az-aca \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
