@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.pkl
+*.joblib
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.git/
+.github/
+.vscode/
+.idea/
+artifacts/
+data/
+logs/
