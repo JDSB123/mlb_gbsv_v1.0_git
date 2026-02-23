@@ -4,14 +4,14 @@ from mlbv1.data.loader import SyntheticDataLoader
 from mlbv1.data.preprocessor import preprocess
 
 
-def test_synthetic_loader_shape():
+def test_synthetic_loader_shape() -> None:
     loader = SyntheticDataLoader(num_games=50)
     df = loader.load()
     assert len(df) == 50
     assert "home_team" in df.columns
 
 
-def test_preprocess_target():
+def test_preprocess_target() -> None:
     loader = SyntheticDataLoader(num_games=10)
     df = loader.load()
     processed = preprocess(df)

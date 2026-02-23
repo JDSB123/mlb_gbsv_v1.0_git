@@ -55,7 +55,9 @@ def engineer_features(
     )
 
     # Win-rate differential (home advantage signal)
-    data["win_rate_diff_short"] = data["home_win_rate_short"] - data["away_win_rate_short"]
+    data["win_rate_diff_short"] = (
+        data["home_win_rate_short"] - data["away_win_rate_short"]
+    )
     data["win_rate_diff_long"] = data["home_win_rate_long"] - data["away_win_rate_long"]
 
     # Runs differential

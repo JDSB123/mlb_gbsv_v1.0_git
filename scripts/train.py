@@ -60,8 +60,12 @@ def main() -> None:
         default=None,
         help="Model type: random_forest, logistic_regression, xgboost, lightgbm, all",
     )
-    parser.add_argument("--tune", action="store_true", help="Enable GridSearchCV tuning")
-    parser.add_argument("--ensemble", action="store_true", help="Build ensemble after training")
+    parser.add_argument(
+        "--tune", action="store_true", help="Enable GridSearchCV tuning"
+    )
+    parser.add_argument(
+        "--ensemble", action="store_true", help="Build ensemble after training"
+    )
     args = parser.parse_args()
 
     config = AppConfig.load(args.config)
@@ -98,7 +102,9 @@ def main() -> None:
         names = list(ALL_MODELS) if model_type == "all" else [model_type]
         for name in names:
             try:
-                model = trainer.tune_hyperparameters(train_features, train_target, name, tuning)
+                model = trainer.tune_hyperparameters(
+                    train_features, train_target, name, tuning
+                )
                 trainer.save(model)
                 acc = trainer.evaluate(model, test_features, test_target)
                 logger.info("%s (tuned) accuracy: %.3f", name, acc)
@@ -107,12 +113,16 @@ def main() -> None:
     else:
         # Standard training
         if model_type in {"random_forest", "all"}:
-            rf = trainer.train_random_forest(train_features, train_target, config.model.random_forest)
+            rf = trainer.train_random_forest(
+                train_features, train_target, config.model.random_forest
+            )
             trainer.save(rf)
             acc = trainer.evaluate(rf, test_features, test_target)
             preds = rf.model.predict(test_features)
             m = evaluate(test_target, preds)
-            logger.info("RF  acc=%.3f  ROI=%.3f  Sharpe=%.3f", acc, m.roi, m.sharpe_ratio)
+            logger.info(
+                "RF  acc=%.3f  ROI=%.3f  Sharpe=%.3f", acc, m.roi, m.sharpe_ratio
+            )
 
         if model_type in {"logistic_regression", "all"}:
             lr = trainer.train_logistic_regression(
@@ -122,27 +132,37 @@ def main() -> None:
             acc = trainer.evaluate(lr, test_features, test_target)
             preds = lr.model.predict(lr.scaler.transform(test_features))  # type: ignore[union-attr]
             m = evaluate(test_target, preds)
-            logger.info("LR  acc=%.3f  ROI=%.3f  Sharpe=%.3f", acc, m.roi, m.sharpe_ratio)
+            logger.info(
+                "LR  acc=%.3f  ROI=%.3f  Sharpe=%.3f", acc, m.roi, m.sharpe_ratio
+            )
 
         if model_type in {"xgboost", "all"}:
             try:
-                xgb = trainer.train_xgboost(train_features, train_target, config.model.xgboost)
+                xgb = trainer.train_xgboost(
+                    train_features, train_target, config.model.xgboost
+                )
                 trainer.save(xgb)
                 acc = trainer.evaluate(xgb, test_features, test_target)
                 preds = xgb.model.predict(test_features)
                 m = evaluate(test_target, preds)
-                logger.info("XGB acc=%.3f  ROI=%.3f  Sharpe=%.3f", acc, m.roi, m.sharpe_ratio)
+                logger.info(
+                    "XGB acc=%.3f  ROI=%.3f  Sharpe=%.3f", acc, m.roi, m.sharpe_ratio
+                )
             except ImportError:
                 logger.warning("xgboost not installed — skipping")
 
         if model_type in {"lightgbm", "all"}:
             try:
-                lgbm = trainer.train_lightgbm(train_features, train_target, config.model.lightgbm)
+                lgbm = trainer.train_lightgbm(
+                    train_features, train_target, config.model.lightgbm
+                )
                 trainer.save(lgbm)
                 acc = trainer.evaluate(lgbm, test_features, test_target)
                 preds = lgbm.model.predict(test_features)
                 m = evaluate(test_target, preds)
-                logger.info("LGBM acc=%.3f  ROI=%.3f  Sharpe=%.3f", acc, m.roi, m.sharpe_ratio)
+                logger.info(
+                    "LGBM acc=%.3f  ROI=%.3f  Sharpe=%.3f", acc, m.roi, m.sharpe_ratio
+                )
             except ImportError:
                 logger.warning("lightgbm not installed — skipping")
 
@@ -164,12 +184,16 @@ def main() -> None:
             vacc = trainer.evaluate(voting, test_features, test_target)
             logger.info("Voting ensemble accuracy: %.3f", vacc)
 
-            stacking = et.build_stacking_ensemble(base_models, train_features, train_target)
+            stacking = et.build_stacking_ensemble(
+                base_models, train_features, train_target
+            )
             trainer.save(stacking)
             sacc = trainer.evaluate(stacking, test_features, test_target)
             logger.info("Stacking ensemble accuracy: %.3f", sacc)
         else:
-            logger.warning("Need ≥2 base models for ensemble — only %d found", len(base_models))
+            logger.warning(
+                "Need ≥2 base models for ensemble — only %d found", len(base_models)
+            )
 
     logger.info("Training complete — artifacts saved to artifacts/models/")
 

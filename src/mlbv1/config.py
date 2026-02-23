@@ -197,7 +197,9 @@ class AppConfig:
         )
         feature_cfg = FeatureConfig(**payload.get("features", {}))
         alert_cfg = AlertConfig.from_env()
-        return AppConfig(data=data_cfg, model=model_cfg, features=feature_cfg, alerts=alert_cfg)
+        return AppConfig(
+            data=data_cfg, model=model_cfg, features=feature_cfg, alerts=alert_cfg
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize config to a dictionary."""

@@ -5,7 +5,7 @@ from mlbv1.data.preprocessor import preprocess
 from mlbv1.features.engineer import engineer_features
 
 
-def test_engineer_features_columns():
+def test_engineer_features_columns() -> None:
     df = SyntheticDataLoader(num_games=20).load()
     processed = preprocess(df)
     features = engineer_features(processed.features)

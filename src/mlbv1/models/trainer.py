@@ -270,7 +270,9 @@ class ModelTrainer:
                     logger.warning("Tuning %s failed: %s", name, exc)
         else:
             models["random_forest"] = self.train_random_forest(X, y, rf_config)
-            models["logistic_regression"] = self.train_logistic_regression(X, y, lr_config)
+            models["logistic_regression"] = self.train_logistic_regression(
+                X, y, lr_config
+            )
             if xgb_config:
                 try:
                     models["xgboost"] = self.train_xgboost(X, y, xgb_config)
