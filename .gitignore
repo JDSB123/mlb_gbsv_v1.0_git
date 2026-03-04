@@ -10,6 +10,7 @@ __pycache__/
 .build/
 dist/
 .venv/
+.venv_ci/
 venv/
 
 # Testing
@@ -39,4 +40,6 @@ Thumbs.db
 # Data/Artifacts
 artifacts/
 data/
+!src/mlbv1/data/
+!src/mlbv1/data/*.py
 logs/
