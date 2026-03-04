@@ -1,9 +1,9 @@
 """Tests for model training and prediction."""
 
+from mlbv1.config import RandomForestConfig
 from mlbv1.data.loader import SyntheticDataLoader
 from mlbv1.data.preprocessor import preprocess
 from mlbv1.features.engineer import engineer_features
-from mlbv1.config import RandomForestConfig
 from mlbv1.models.trainer import ModelTrainer
 
 

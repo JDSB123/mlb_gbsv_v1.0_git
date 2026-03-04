@@ -36,8 +36,36 @@ jobs:
       - name: Pytest
         run: pytest --tb=short -q
 
-  build-and-push:
+  infra:
     needs: lint-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Ensure resource group exists
+        run: az group create --name ${{ env.RESOURCE_GROUP }} --location eastus --output none 2>/dev/null || true
+
+      - name: Deploy Bicep
+        run: |
+          if [ -n "${{ secrets.AZURE_SP_OBJECT_ID }}" ]; then
+            az deployment group create \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --template-file infra/main.bicep \
+              --parameters namePrefix=mlb-gbsv-v1-az servicePrincipalObjectId=${{ secrets.AZURE_SP_OBJECT_ID }}
+          else
+            az deployment group create \
+              --resource-group ${{ env.RESOURCE_GROUP }} \
+              --template-file infra/main.bicep \
+              --parameters namePrefix=mlb-gbsv-v1-az
+          fi
+
+  build-and-push:
+    needs: infra
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -58,7 +86,7 @@ jobs:
           docker push $TAG
           docker push $LATEST
 
-  deploy:
+  deploy-app:
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
@@ -68,13 +96,6 @@ jobs:
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-      - name: Deploy Bicep
-        run: |
-          az deployment group create \
-            --resource-group ${{ env.RESOURCE_GROUP }} \
-            --template-file infra/main.bicep \
-            --parameters namePrefix=mlb-gbsv-v1-az
 
       - name: Update Container App image
         run: |

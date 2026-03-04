@@ -397,11 +397,20 @@ def _predict_with_all_models(
     return all_picks
 
 
-def _build_model_weights(db: TrackingDB, lookback_runs: int = 200) -> dict[str, float]:
-    """Build per-model weights from recent run accuracy history."""
+def _build_model_weights(
+    db: TrackingDB,
+    lookback_runs: int = 200,
+    decay: float = 0.97,
+) -> dict[str, float]:
+    """Build per-model weights from recent run accuracy history.
+
+    Uses exponential recency decay, where newer runs carry more weight.
+    """
     runs = db.get_runs(limit=lookback_runs)
-    by_model: dict[str, list[float]] = {}
-    for run in runs:
+    weighted_sums: dict[str, float] = {}
+    weight_totals: dict[str, float] = {}
+
+    for age, run in enumerate(runs):
         model = str(run.get("model_name", "")).strip()
         accuracy_raw = run.get("accuracy")
         if not model or accuracy_raw is None:
@@ -411,16 +420,24 @@ def _build_model_weights(db: TrackingDB, lookback_runs: int = 200) -> dict[str, 
         except (TypeError, ValueError):
             continue
         if 0.0 <= accuracy <= 1.0:
-            by_model.setdefault(model, []).append(accuracy)
+            recency_weight = decay**age
+            weighted_sums[model] = weighted_sums.get(model, 0.0) + (
+                accuracy * recency_weight
+            )
+            weight_totals[model] = weight_totals.get(model, 0.0) + recency_weight
 
     weights: dict[str, float] = {}
-    for model_name, scores in by_model.items():
+    for model_name, total in weighted_sums.items():
+        denom = weight_totals.get(model_name, 0.0)
+        if denom <= 0:
+            continue
         # Keep a floor so weaker models still contribute a little.
-        weights[model_name] = max(0.05, float(sum(scores) / len(scores)))
+        weights[model_name] = max(0.05, float(total / denom))
 
     if weights:
         logger.info(
-            "Model weights from recent accuracy: %s",
+            "Model weights from recent accuracy (decay=%.2f): %s",
+            decay,
             ", ".join(f"{k}={v:.3f}" for k, v in sorted(weights.items())),
         )
     else:
