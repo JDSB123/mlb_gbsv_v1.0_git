@@ -28,7 +28,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[all]"
+          pip install -e ".[dashboard,dev]"
       - name: Ruff
         run: ruff check src tests scripts
       - name: Mypy
@@ -49,6 +49,14 @@ jobs:
 
       - name: Ensure resource group exists
         run: az group create --name ${{ env.RESOURCE_GROUP }} --location eastus --output none 2>/dev/null || true
+
+      - name: Check optional SP object ID secret
+        run: |
+          if [ -n "${{ secrets.AZURE_SP_OBJECT_ID }}" ]; then
+            echo "AZURE_SP_OBJECT_ID is configured"
+          else
+            echo "AZURE_SP_OBJECT_ID is not configured; proceeding without KV role assignment parameter"
+          fi
 
       - name: Deploy Bicep
         run: |

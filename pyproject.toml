@@ -29,7 +29,14 @@ dev = [
   "mypy>=1.8.0",
   "pandas-stubs>=2.1.0",
 ]
-all = ["mlbv1[dashboard,dev]"]
+all = [
+  "streamlit>=1.30.0",
+  "plotly>=5.18.0",
+  "pytest>=8.0.0",
+  "ruff>=0.4.0",
+  "mypy>=1.8.0",
+  "pandas-stubs>=2.1.0",
+]
 
 [project.scripts]
 mlbv1-train = "mlbv1.cli:train_cli"
