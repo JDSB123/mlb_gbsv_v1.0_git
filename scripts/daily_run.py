@@ -15,6 +15,7 @@ import logging
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pandas as pd
 
@@ -116,12 +117,18 @@ def main() -> None:
         all_picks = _predict_with_all_models(
             today_features, today_processed, db, run_id
         )
+        consensus_picks = _build_consensus_picks(all_picks)
+        logger.info(
+            "Built %d consensus picks from %d model picks",
+            len(consensus_picks),
+            len(all_picks),
+        )
 
         # Step 6: Bankroll sizing
         logger.info("=== Step 6: Bankroll sizing ===")
         bankroll = BankrollManager(BankrollConfig())
         recommendations = []
-        for pick in all_picks:
+        for pick in consensus_picks:
             rec = bankroll.recommend_bet(
                 game_date=pick["game_date"],
                 home_team=pick["home_team"],
@@ -140,7 +147,7 @@ def main() -> None:
         logger.info("Generated %d actionable picks", len(recommendations))
         for r in recommendations:
             logger.info(
-                "  %s @ %s | %s %+.1f | Conf: %.1f%% | Edge: %.1f%% | Bet: $%.0f",
+                "  %s @ %s | %s %+.1f | Conf: %.1f%% | Edge: %.1f%% | Bet: $%.0f | Models: %d (%.0f%% agree)",
                 r["away_team"],
                 r["home_team"],
                 r.get("side", "?"),
@@ -148,6 +155,8 @@ def main() -> None:
                 r["probability"] * 100,
                 r.get("edge", 0) * 100,
                 r.get("recommended_bet", 0),
+                int(r.get("model_count", 1)),
+                float(r.get("agreement", 1.0)) * 100,
             )
 
         # Step 7: Send alerts
@@ -333,12 +342,12 @@ def _predict_with_all_models(
     processed: ProcessedData,
     db: TrackingDB,
     run_id: str,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Load all saved models and generate predictions."""
     from pathlib import Path
 
     model_dir = Path("artifacts/models")
-    all_picks: list[dict] = []
+    all_picks: list[dict[str, Any]] = []
 
     if not model_dir.exists():
         logger.warning("No model directory found — skipping predictions")
@@ -385,6 +394,52 @@ def _predict_with_all_models(
             logger.warning("Model %s failed: %s", model_path.name, exc)
 
     return all_picks
+
+
+def _build_consensus_picks(all_picks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse per-model picks into one consensus pick per game."""
+    if not all_picks:
+        return []
+
+    frame = pd.DataFrame(all_picks)
+    keys = [
+        "game_date",
+        "home_team",
+        "away_team",
+        "spread",
+        "home_moneyline",
+        "away_moneyline",
+    ]
+
+    consensus: list[dict[str, Any]] = []
+    grouped = frame.groupby(keys, dropna=False, sort=False)
+    for game_key, group in grouped:
+        avg_home_prob = float(group["probability"].mean())
+        avg_home_pick = float(group["prediction"].mean())
+        consensus_prediction = int(round(avg_home_pick))
+        agreement = max(avg_home_pick, 1.0 - avg_home_pick)
+        model_names = sorted({str(name) for name in group["model_name"].tolist()})
+
+        game_date, home_team, away_team, spread, home_ml, away_ml = game_key
+        consensus.append(
+            {
+                "game_date": str(game_date),
+                "home_team": str(home_team),
+                "away_team": str(away_team),
+                "spread": float(spread),
+                "prediction": consensus_prediction,
+                "probability": avg_home_prob,
+                "home_moneyline": int(home_ml),
+                "away_moneyline": int(away_ml),
+                "model_name": "consensus",
+                "model_count": int(group.shape[0]),
+                "agreement": float(agreement),
+                "model_names": model_names,
+            }
+        )
+
+    consensus.sort(key=lambda p: abs(float(p["probability"]) - 0.5), reverse=True)
+    return consensus
 
 
 if __name__ == "__main__":
