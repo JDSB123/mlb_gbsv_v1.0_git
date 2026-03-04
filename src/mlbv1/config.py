@@ -60,7 +60,7 @@ class LogisticRegressionConfig:
     """LogisticRegression model parameters."""
 
     C: float = 1.0
-    max_iter: int = 1000
+    max_iter: int = 2000
     random_state: int = 42
 
 

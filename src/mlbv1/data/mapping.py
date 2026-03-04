@@ -40,6 +40,20 @@ TEAM_MAP = {
 # Reverse map for convenience
 ABBR_TO_TEAM = {v: k for k, v in TEAM_MAP.items()}
 
+# Common short-form aliases for ambiguous city names
+TEAM_ALIASES: dict[str, str] = {
+    "NY Yankees": "NYY",
+    "NY Mets": "NYM",
+    "LA Dodgers": "LAD",
+    "LA Angels": "LAA",
+    "Chi Cubs": "CHC",
+    "Chi White Sox": "CHW",
+    "SF Giants": "SFG",
+    "SD Padres": "SDP",
+    "TB Rays": "TBR",
+    "KC Royals": "KCR",
+}
+
 # Stadium metadata: (Latitude, Longitude, is_indoor)
 STADIUM_DATA = {
     "ARI": (33.4455, -112.0667, True),  # Chase Field (Retractable)
@@ -80,18 +94,35 @@ def normalize_team(name: str) -> str:
     if not name:
         return "UNK"
 
+    clean = name.strip()
+
     # Check if already a valid abbr
-    if name.upper() in ABBR_TO_TEAM:
-        return name.upper()
+    if clean.upper() in ABBR_TO_TEAM:
+        return clean.upper()
 
-    # Try direct map lookup
-    if name in TEAM_MAP:
-        return TEAM_MAP[name]
+    # Try direct map lookup (exact match)
+    if clean in TEAM_MAP:
+        return TEAM_MAP[clean]
 
-    # Try fuzzy or partial (strip city names, etc.)
+    # Case-insensitive exact match
+    name_lower = clean.lower()
     for team_name, abbr in TEAM_MAP.items():
-        if team_name in name or name in team_name:
+        if team_name.lower() == name_lower:
             return abbr
+
+    # Check common aliases
+    for alias, abbr in TEAM_ALIASES.items():
+        if alias.lower() == name_lower:
+            return abbr
+
+    # Match on mascot name (last word), only if unambiguous
+    matches: list[str] = []
+    for team_name, abbr in TEAM_MAP.items():
+        mascot = team_name.rsplit(" ", 1)[-1].lower()
+        if name_lower == mascot or name_lower.endswith(mascot):
+            matches.append(abbr)
+    if len(matches) == 1:
+        return matches[0]
 
     return "UNK"
 

@@ -270,7 +270,8 @@ class OddsAPILoader(BaseLoader):
             }
         )
         url = f"{self.base_url}/sports/baseball_mlb/events/{event_id}/odds/?{params}"
-        return self._http_get_json(url)
+        result: dict[str, Any] = self._http_get_json(url)
+        return result
 
     def _normalize(self, payload: Iterable[dict[str, Any]]) -> pd.DataFrame:
         records: list[dict[str, Any]] = []
@@ -380,7 +381,8 @@ class BetsAPILoader(BaseLoader):
             }
         )
         url = f"{self.base_url}/v3/event/odds?{params}"
-        return self._http_get_json(url)
+        result: dict[str, Any] = self._http_get_json(url)
+        return result
 
     def _normalize(self, events: list[dict[str, Any]]) -> pd.DataFrame:
         records: list[dict[str, Any]] = []

@@ -21,15 +21,15 @@ import pandas as pd
 
 from mlbv1.alerts.manager import AlertManager
 from mlbv1.config import AppConfig
+from mlbv1.data.historical_enrichment import (
+    enrich_training_data_with_historical_sources,
+)
 from mlbv1.data.loader import (
     BetsAPILoader,
     MLBStatsAPILoader,
     OddsAPILoader,
     SyntheticDataLoader,
     WeatherEnricher,
-)
-from mlbv1.data.historical_enrichment import (
-    enrich_training_data_with_historical_sources,
 )
 from mlbv1.data.preprocessor import ProcessedData, preprocess, train_test_split_time
 from mlbv1.features.engineer import FeatureSet, engineer_features
@@ -114,10 +114,13 @@ def main() -> None:
             logger.info(
                 f"Training data spans 2023-2026 (recency-weighted): {len(train_df)} games total"
             )
-        except Exception as e:
+        except (ConnectionError, ValueError, KeyError, OSError) as e:
             logger.warning(
-                f"Could not load historical seasons ({e}); using current + synthetic fallback"
+                "Could not load historical seasons (%s); using current + synthetic fallback",
+                e,
             )
+        except Exception:
+            logger.exception("Unexpected error loading historical seasons")
             from mlbv1.data.synthetic_history import enrich_current_data_with_history
 
             if len(train_df) >= 50:
@@ -149,10 +152,13 @@ def main() -> None:
                 include_statcast=True,  # Enabled: fetches exit velo, barrel %, xwOBA
                 include_retrosheet=False,
             )
-        except Exception as e:
+        except (ImportError, ConnectionError, ValueError, KeyError, OSError) as e:
             logger.warning(
-                f"Historical data enrichment failed: {e}. Continuing with current data."
+                "Historical data enrichment failed: %s. Continuing with current data.",
+                e,
             )
+        except Exception:
+            logger.exception("Unexpected error during historical data enrichment")
 
         processed = preprocess(train_df)
         features = engineer_features(

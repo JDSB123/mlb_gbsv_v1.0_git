@@ -48,7 +48,7 @@ class SyntheticHistoryGenerator:
     def __init__(self, seed: int = 42) -> None:
         random.seed(seed)
 
-    def generate_seasons(self, years: list[int] = None) -> pd.DataFrame:
+    def generate_seasons(self, years: list[int] | None = None) -> pd.DataFrame:
         """Generate synthetic games for specified years (default: 2023-2025)."""
         if years is None:
             years = [2023, 2024, 2025]
@@ -95,7 +95,7 @@ class SyntheticHistoryGenerator:
 
     def _generate_season_games(
         self, year: int, team_stats: dict[str, dict[str, float]]
-    ) -> list[dict]:
+    ) -> list[dict[str, object]]:
         """Generate games for a single season."""
         records = []
         start_date = datetime(year, 3, 28, tzinfo=UTC)  # Spring Opening Day
@@ -174,7 +174,7 @@ class SyntheticHistoryGenerator:
 
 
 def enrich_current_data_with_history(
-    current_df: pd.DataFrame, synthetic_years: list[int] = None
+    current_df: pd.DataFrame, synthetic_years: list[int] | None = None
 ) -> pd.DataFrame:
     """Combine current season data with synthetic historical years."""
     if synthetic_years is None:

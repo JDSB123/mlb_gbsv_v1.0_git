@@ -12,7 +12,7 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
-from sklearn.model_selection import GridSearchCV, StratifiedKFold, cross_val_score
+from sklearn.model_selection import GridSearchCV
 from sklearn.preprocessing import StandardScaler
 
 from mlbv1.config import (
@@ -108,10 +108,8 @@ class ModelTrainer:
     def train_xgboost(
         self, X: pd.DataFrame, y: pd.Series, config: XGBoostConfig
     ) -> TrainedModel:
-        from xgboost import XGBClassifier  # lazy import
-
-        # Calculate class weight for balanced training
         from sklearn.utils.class_weight import compute_sample_weight
+        from xgboost import XGBClassifier  # lazy import
 
         sample_weights = compute_sample_weight("balanced", y)
 

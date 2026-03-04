@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 import pandas as pd
 
@@ -34,7 +33,7 @@ class LahmanDataEnricher:
             # Rename columns to match expected format
             df_renamed = df[["Name", "ERA", "W", "IP"]].copy()
             df_renamed.columns = ["pitcher_name", "era", "wins", "innings_pitched"]
-            return df_renamed.dropna(subset=["era"])
+            return pd.DataFrame(df_renamed.dropna(subset=["era"]))
         except ImportError:
             logger.warning("pybaseball not installed; skipping Lahman pitcher stats")
             return pd.DataFrame()
@@ -43,8 +42,6 @@ class LahmanDataEnricher:
     def get_team_stats(year: int | None = None) -> pd.DataFrame:
         """Fetch team seasonal stats from Lahman."""
         try:
-            from pybaseball import statcast
-            from pybaseball.datasources.statcast import playerid_reverse_lookup
             from pybaseball import team_pitching
 
             if year:
@@ -60,7 +57,7 @@ class LahmanDataEnricher:
 
             # Extract team ERA, team runs, team wins
             if df is not None and not df.empty:
-                return df[["Team", "ERA", "W", "R"]].copy()
+                return pd.DataFrame(df[["Team", "ERA", "W", "R"]].copy())
             return pd.DataFrame()
         except ImportError:
             logger.warning("pybaseball not installed; skipping Lahman team stats")
@@ -77,15 +74,7 @@ class LahmanDataEnricher:
 
         df = games_df.copy()
 
-        # Create pitcher lookup table (simplified: ERA by pitcher name)
-        # In production, would use Chadwick ID crosswalk for exact matching
-        pitcher_lookup = pitcher_stats.groupby("pitcher_name")[["era", "wins"]].mean()
-
-        # Note: This is a simplified approach. In production, you'd need:
-        # 1. MLB game data with pitcher names
-        # 2. Chadwick register to match pitcher names to IDs
-        # 3. Then join Lahman stats by ID
-
+        # TODO: Real pitcher matching requires Chadwick ID crosswalk data.
         # For now, preserve existing pitcher ERA columns if they exist
         if "home_pitcher_era" not in df.columns:
             df["home_pitcher_era"] = 3.5  # League average
@@ -112,7 +101,7 @@ class StatcastEnricher:
             df = statcast(start_dt=start_date, end_dt=end_date)
             if df is not None and not df.empty:
                 logger.info(f"Loaded {len(df)} Statcast records")
-                return df
+                return pd.DataFrame(df)
         except Exception as e:
             logger.warning(f"Could not fetch Statcast data: {e}")
 

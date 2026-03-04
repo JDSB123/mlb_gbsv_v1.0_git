@@ -217,7 +217,7 @@ class TestOddsAPILoader:
             loader = OddsAPILoader(api_key="test-key")
             df = loader.load()
             assert len(df) == 1
-            assert df.iloc[0]["home_team"] == "New York Yankees"
+            assert df.iloc[0]["home_team"] == "NYY"
 
     def test_empty_events(self) -> None:
         with patch.object(OddsAPILoader, "_http_get_json", return_value=[]):
