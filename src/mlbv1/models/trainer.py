@@ -83,7 +83,9 @@ class ModelTrainer:
         self, X: pd.DataFrame, y: pd.Series, config: LogisticRegressionConfig
     ) -> TrainedModel:
         scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X)
+        X_scaled = pd.DataFrame(
+            scaler.fit_transform(X), columns=X.columns, index=X.index
+        )
         model = LogisticRegression(
             C=config.C,
             max_iter=config.max_iter,
@@ -117,7 +119,6 @@ class ModelTrainer:
             reg_alpha=config.reg_alpha,
             reg_lambda=config.reg_lambda,
             random_state=config.random_state,
-            use_label_encoder=False,
             eval_metric=config.eval_metric,
         )
         model.fit(X, y)
@@ -238,7 +239,10 @@ class ModelTrainer:
 
     def evaluate(self, model: TrainedModel, X: pd.DataFrame, y: pd.Series) -> float:
         if model.scaler:
-            preds = model.model.predict(model.scaler.transform(X))
+            scaled = pd.DataFrame(
+                model.scaler.transform(X), columns=model.feature_names, index=X.index
+            )
+            preds = model.model.predict(scaled)
         else:
             preds = model.model.predict(X)
         return float(accuracy_score(y, preds))

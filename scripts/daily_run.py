@@ -14,7 +14,9 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
+
+import pandas as pd
 
 from mlbv1.alerts.manager import AlertManager
 from mlbv1.config import AppConfig
@@ -25,8 +27,8 @@ from mlbv1.data.loader import (
     SyntheticDataLoader,
     WeatherEnricher,
 )
-from mlbv1.data.preprocessor import preprocess, train_test_split_time
-from mlbv1.features.engineer import engineer_features
+from mlbv1.data.preprocessor import ProcessedData, preprocess, train_test_split_time
+from mlbv1.features.engineer import FeatureSet, engineer_features
 from mlbv1.metrics import evaluate
 from mlbv1.models.predictor import load_model, predict
 from mlbv1.models.trainer import ModelTrainer
@@ -61,7 +63,7 @@ def main() -> None:
         config = config.override(data={"loader": args.loader})
 
     db = TrackingDB(args.db)
-    run_id = f"daily-{datetime.utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6]}"
+    run_id = f"daily-{datetime.now(tz=UTC).strftime('%Y%m%d')}-{uuid.uuid4().hex[:6]}"
     alerts = AlertManager() if not args.no_alerts else None
 
     try:
@@ -197,10 +199,10 @@ def _settle_yesterday(db: TrackingDB, config: AppConfig) -> None:
         logger.warning("Settlement failed: %s", exc)
 
 
-def _load_training_data(config: AppConfig) -> object:
+def _load_training_data(config: AppConfig) -> pd.DataFrame:
     """Load last 90 days of data for training."""
 
-    end = datetime.utcnow()
+    end = datetime.now(tz=UTC)
     start = end - timedelta(days=90)
 
     try:
@@ -220,18 +222,13 @@ def _load_training_data(config: AppConfig) -> object:
 
 
 def _train_and_save(
-    features: object,
-    processed: object,
+    features: FeatureSet,
+    processed: ProcessedData,
     config: AppConfig,
     db: TrackingDB,
     run_id: str,
 ) -> None:
     """Train all models and save artifacts."""
-    from mlbv1.data.preprocessor import ProcessedData
-    from mlbv1.features.engineer import FeatureSet
-
-    assert isinstance(features, FeatureSet)
-    assert isinstance(processed, ProcessedData)
 
     train_df, test_df = train_test_split_time(processed.features, 0.8)
     train_X = features.X.loc[train_df.index]
@@ -262,9 +259,15 @@ def _train_and_save(
                 continue
 
             acc = trainer.evaluate(trained, test_X, test_y)
-            preds = trained.model.predict(
-                trained.scaler.transform(test_X) if trained.scaler else test_X
-            )
+            if trained.scaler:
+                scaled_test = pd.DataFrame(
+                    trained.scaler.transform(test_X),
+                    columns=trained.feature_names,
+                    index=test_X.index,
+                )
+                preds = trained.model.predict(scaled_test)
+            else:
+                preds = trained.model.predict(test_X)
             metrics = evaluate(test_y, preds)
             trainer.save(trained)
 
@@ -290,7 +293,7 @@ def _train_and_save(
             logger.warning("Failed to train %s: %s", model_type, exc)
 
 
-def _load_todays_games(config: AppConfig) -> object:
+def _load_todays_games(config: AppConfig) -> pd.DataFrame:
     """Load today's games from odds APIs."""
 
     odds_key = os.getenv("ODDS_API_KEY", "")
@@ -321,24 +324,18 @@ def _load_todays_games(config: AppConfig) -> object:
 
     logger.info("No live odds available — using synthetic for today")
     return SyntheticDataLoader(
-        num_games=15, seed=int(datetime.utcnow().timestamp())
+        num_games=15, seed=int(datetime.now(tz=UTC).timestamp())
     ).load()
 
 
 def _predict_with_all_models(
-    features: object,
-    processed: object,
+    features: FeatureSet,
+    processed: ProcessedData,
     db: TrackingDB,
     run_id: str,
 ) -> list[dict]:
     """Load all saved models and generate predictions."""
     from pathlib import Path
-
-    from mlbv1.data.preprocessor import ProcessedData
-    from mlbv1.features.engineer import FeatureSet
-
-    assert isinstance(features, FeatureSet)
-    assert isinstance(processed, ProcessedData)
 
     model_dir = Path("artifacts/models")
     all_picks: list[dict] = []
