@@ -1,11 +1,13 @@
 param location string = 'eastus'
 param namePrefix string = 'mlb-gbsv-v1-az'
+param servicePrincipalObjectId string = ''
 
 var acrName = replace('${namePrefix}-acr', '-', '')
 var storageName = replace('${namePrefix}-sto', '-', '')
 var kvName = '${namePrefix}-kv'
 var acaEnvName = '${namePrefix}-acaenv'
 var acaName = '${namePrefix}-aca'
+var kvSecretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
 
 resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
   name: acrName
@@ -42,7 +44,17 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
     enableSoftDelete: true
     enabledForDeployment: true
     enabledForTemplateDeployment: true
-    accessPolicies: []
+    enableRbacAuthorization: true
+  }
+}
+
+resource kvRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (servicePrincipalObjectId != '') {
+  name: guid(keyVault.id, servicePrincipalObjectId, kvSecretsUserRoleId)
+  scope: keyVault
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', kvSecretsUserRoleId)
+    principalId: servicePrincipalObjectId
+    principalType: 'ServicePrincipal'
   }
 }
 

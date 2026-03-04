@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from mlbv1.models.ensemble import EnsembleModel
 from mlbv1.models.trainer import TrainedModel
 
 
@@ -19,20 +20,26 @@ class PredictionResult:
     probabilities: pd.Series
 
 
-def load_model(path: str) -> TrainedModel:
+def load_model(path: str) -> TrainedModel | EnsembleModel:
     """Load a trained model from disk."""
     model_path = Path(path)
     if not model_path.exists():
         raise FileNotFoundError(f"Model not found: {model_path}")
     with open(model_path, "rb") as handle:
-        model = pickle.load(handle)
-    if not isinstance(model, TrainedModel):
+        model = pickle.load(handle)  # noqa: S301
+    if not isinstance(model, (TrainedModel, EnsembleModel)):
         raise TypeError("Invalid model file")
     return model
 
 
-def predict(model: TrainedModel, X: pd.DataFrame) -> PredictionResult:
+def predict(model: TrainedModel | EnsembleModel, X: pd.DataFrame) -> PredictionResult:
     """Generate predictions and probabilities."""
+    if isinstance(model, EnsembleModel):
+        features = X[model.feature_names]
+        preds = pd.Series(model.predict(features), index=X.index)
+        proba = pd.Series(model.predict_proba(features)[:, 1], index=X.index)
+        return PredictionResult(predictions=preds, probabilities=proba)
+
     features = X[model.feature_names]
     if model.scaler:
         features = pd.DataFrame(

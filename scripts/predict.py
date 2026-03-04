@@ -39,7 +39,9 @@ def build_loader(config: AppConfig):  # noqa: ANN201
     if loader == "odds_api":
         return OddsAPILoader(config.data.api_base_url, config.data.api_key or "")
     if loader == "action_network":
-        return ActionNetworkLoader(config.data.api_base_url, config.data.api_key or "")
+        return ActionNetworkLoader(
+            config.data.api_base_url, config.data.api_key or "", config.data.email or ""
+        )
     if loader == "bets_api":
         return BetsAPILoader(config.data.api_base_url, config.data.api_key or "")
     if loader == "mlb_stats":
@@ -57,6 +59,20 @@ def main() -> None:
         default="artifacts/models/random_forest.pkl",
         help="Path to model file",
     )
+    parser.add_argument(
+        "--market",
+        type=str,
+        default="spread",
+        choices=[
+            "spread",
+            "moneyline",
+            "total",
+            "f5_spread",
+            "f5_moneyline",
+            "f5_total",
+        ],
+        help="Market to predict (used for market-suffixed model files)",
+    )
     parser.add_argument("--top-n", type=int, default=10, help="Show top N predictions")
     args = parser.parse_args()
 
@@ -72,7 +88,17 @@ def main() -> None:
     processed = preprocess(df)
     features = engineer_features(processed.features)
 
-    model = load_model(args.model_path)
+    model_path = args.model_path
+    if model_path.endswith(".pkl") and "__" not in model_path:
+        candidate = model_path[:-4] + f"__{args.market}.pkl"
+        try:
+            model = load_model(candidate)
+            model_path = candidate
+        except FileNotFoundError:
+            model = load_model(model_path)
+    else:
+        model = load_model(model_path)
+
     results = predict(model, features.X)
 
     output = processed.metadata.copy()

@@ -12,7 +12,7 @@ import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
-from sklearn.model_selection import GridSearchCV
+from sklearn.model_selection import GridSearchCV, StratifiedKFold, cross_val_score
 from sklearn.preprocessing import StandardScaler
 
 from mlbv1.config import (
@@ -65,6 +65,7 @@ class ModelTrainer:
             max_depth=config.max_depth,
             min_samples_split=config.min_samples_split,
             min_samples_leaf=config.min_samples_leaf,
+            class_weight="balanced",
             random_state=config.random_state,
         )
         model.fit(X, y)
@@ -89,6 +90,7 @@ class ModelTrainer:
         model = LogisticRegression(
             C=config.C,
             max_iter=config.max_iter,
+            class_weight="balanced",
             random_state=config.random_state,
         )
         model.fit(X_scaled, y)
@@ -108,6 +110,11 @@ class ModelTrainer:
     ) -> TrainedModel:
         from xgboost import XGBClassifier  # lazy import
 
+        # Calculate class weight for balanced training
+        from sklearn.utils.class_weight import compute_sample_weight
+
+        sample_weights = compute_sample_weight("balanced", y)
+
         model = XGBClassifier(
             n_estimators=config.n_estimators,
             max_depth=config.max_depth,
@@ -121,7 +128,7 @@ class ModelTrainer:
             random_state=config.random_state,
             eval_metric=config.eval_metric,
         )
-        model.fit(X, y)
+        model.fit(X, y, sample_weight=sample_weights)
         return TrainedModel(
             name="xgboost",
             model=model,
@@ -148,6 +155,7 @@ class ModelTrainer:
             reg_alpha=config.reg_alpha,
             reg_lambda=config.reg_lambda,
             num_leaves=config.num_leaves,
+            is_unbalance=True,
             random_state=config.random_state,
             verbose=config.verbose,
         )

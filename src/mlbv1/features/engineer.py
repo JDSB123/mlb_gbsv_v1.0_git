@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pandas as pd
+from mlbv1.data.mapping import get_stadium_info
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,38 @@ def engineer_features(
 
     data["home_win"] = (data["home_score"] > data["away_score"]).astype(int)
     data["away_win"] = (data["away_score"] > data["home_score"]).astype(int)
+
+    # Pitcher-level features (ERA, wins)
+    if "home_pitcher_era" in data.columns:
+        data["home_pitcher_era"] = pd.to_numeric(
+            data["home_pitcher_era"], errors="coerce"
+        ).fillna(0.0)
+    else:
+        data["home_pitcher_era"] = 0.0
+
+    if "away_pitcher_era" in data.columns:
+        data["away_pitcher_era"] = pd.to_numeric(
+            data["away_pitcher_era"], errors="coerce"
+        ).fillna(0.0)
+    else:
+        data["away_pitcher_era"] = 0.0
+
+    if "home_pitcher_wins" in data.columns:
+        data["home_pitcher_wins"] = pd.to_numeric(
+            data["home_pitcher_wins"], errors="coerce"
+        ).fillna(0.0)
+    else:
+        data["home_pitcher_wins"] = 0.0
+
+    if "away_pitcher_wins" in data.columns:
+        data["away_pitcher_wins"] = pd.to_numeric(
+            data["away_pitcher_wins"], errors="coerce"
+        ).fillna(0.0)
+    else:
+        data["away_pitcher_wins"] = 0.0
+
+    data["pitcher_era_diff"] = data["home_pitcher_era"] - data["away_pitcher_era"]
+    data["pitcher_wins_diff"] = data["home_pitcher_wins"] - data["away_pitcher_wins"]
 
     # Vectorised rolling stats via groupby().transform() — O(n) per group
     data["home_win_rate_short"] = _rolling_team_stat(
@@ -70,6 +103,18 @@ def engineer_features(
     data["rest_days_home"] = _rest_days(data, "home_team")
     data["rest_days_away"] = _rest_days(data, "away_team")
 
+    # Weather normalization for indoor stadiums
+    # Default: 72F if home stadium is indoor
+    def _normalize_weather(row: pd.Series) -> pd.Series:
+        _, _, is_indoor = get_stadium_info(row["home_team"])
+        if is_indoor:
+            row["temperature_f"] = 72.0
+            row["wind_mph"] = 0.0
+            row["precipitation"] = 0.0
+        return row
+
+    data = data.apply(_normalize_weather, axis=1)
+
     data["temp_f"] = data.get(
         "temperature_f", pd.Series(70.0, index=data.index)
     ).fillna(70.0)
@@ -82,6 +127,49 @@ def engineer_features(
 
     data["month"] = data["game_date"].dt.month
     data["is_weekend"] = data["game_date"].dt.dayofweek.isin([5, 6]).astype(int)
+
+    # Statcast advanced metrics (launch speed, launch angle, estimated BA, estimated wOBA)
+    if "launch_speed_mean" in data.columns:
+        data["launch_speed_mean"] = pd.to_numeric(
+            data["launch_speed_mean"], errors="coerce"
+        ).fillna(88.8)
+    else:
+        data["launch_speed_mean"] = 88.8
+
+    if "launch_speed_max" in data.columns:
+        data["launch_speed_max"] = pd.to_numeric(
+            data["launch_speed_max"], errors="coerce"
+        ).fillna(95.0)
+    else:
+        data["launch_speed_max"] = 95.0
+
+    if "launch_angle_mean" in data.columns:
+        data["launch_angle_mean"] = pd.to_numeric(
+            data["launch_angle_mean"], errors="coerce"
+        ).fillna(12.5)
+    else:
+        data["launch_angle_mean"] = 12.5
+
+    if "estimated_ba_using_speedangle_mean" in data.columns:
+        data["estimated_ba_using_speedangle_mean"] = pd.to_numeric(
+            data["estimated_ba_using_speedangle_mean"], errors="coerce"
+        ).fillna(0.265)
+    else:
+        data["estimated_ba_using_speedangle_mean"] = 0.265
+
+    if "estimated_woba_using_speedangle_mean" in data.columns:
+        data["estimated_woba_using_speedangle_mean"] = pd.to_numeric(
+            data["estimated_woba_using_speedangle_mean"], errors="coerce"
+        ).fillna(0.330)
+    else:
+        data["estimated_woba_using_speedangle_mean"] = 0.330
+
+    if ("barrel", "sum") in data.columns:
+        data["barrels_per_game"] = pd.to_numeric(
+            data[("barrel", "sum")], errors="coerce"
+        ).fillna(25)
+    elif "barrels_per_game" not in data.columns:
+        data["barrels_per_game"] = 25
 
     feature_cols = [
         "home_win_rate_short",
@@ -99,15 +187,40 @@ def engineer_features(
         "away_implied_prob",
         "rest_days_home",
         "rest_days_away",
+        "pitcher_era_diff",
+        "pitcher_wins_diff",
+        "home_pitcher_era",
+        "away_pitcher_era",
+        "home_pitcher_wins",
+        "away_pitcher_wins",
         "temp_f",
         "wind_mph",
         "precipitation",
         "month",
         "is_weekend",
+        "launch_speed_mean",
+        "launch_speed_max",
+        "launch_angle_mean",
+        "estimated_ba_using_speedangle_mean",
+        "estimated_woba_using_speedangle_mean",
+        "barrels_per_game",
         "spread",
         "home_moneyline",
         "away_moneyline",
     ]
+
+    optional_line_cols = [
+        "total_runs",
+        "over_odds",
+        "under_odds",
+        "f5_spread",
+        "f5_home_moneyline",
+        "f5_away_moneyline",
+        "f5_total_runs",
+        "f5_over_odds",
+        "f5_under_odds",
+    ]
+    feature_cols.extend([c for c in optional_line_cols if c in data.columns])
 
     data[feature_cols] = data[feature_cols].fillna(0.0)
     X = data[feature_cols].astype(float)

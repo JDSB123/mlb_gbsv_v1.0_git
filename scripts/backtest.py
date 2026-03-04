@@ -157,6 +157,7 @@ def _fixed_split_backtest(
                 run_id=model_run_id,
                 model_name=model_type,
                 loader="mlb_stats_api",
+                target_market="spread",
                 accuracy=acc,
                 roi=metrics.roi,
                 sharpe=metrics.sharpe_ratio,
@@ -180,6 +181,7 @@ def _fixed_split_backtest(
                     probability=float(probas[i]),
                     home_moneyline=int(row.get("home_moneyline", -110)),
                     away_moneyline=int(row.get("away_moneyline", -110)),
+                    market="spread",
                 )
             )
         db.log_predictions(pred_records)

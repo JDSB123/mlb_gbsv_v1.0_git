@@ -4,6 +4,12 @@ from __future__ import annotations
 
 import argparse
 import logging
+import pickle
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+from sklearn.metrics import accuracy_score
 
 from mlbv1.config import AppConfig
 from mlbv1.data.loader import (
@@ -26,6 +32,20 @@ logger = logging.getLogger(__name__)
 ALL_MODELS = ("random_forest", "logistic_regression", "xgboost", "lightgbm")
 
 
+def _save_ensemble(model: Any, output_dir: Path) -> Path:
+    """Save an EnsembleModel to disk."""
+    path = output_dir / f"{model.name}.pkl"
+    with open(path, "wb") as handle:
+        pickle.dump(model, handle)
+    return path
+
+
+def _evaluate_ensemble(model: Any, X: pd.DataFrame, y: pd.Series) -> float:
+    """Evaluate an EnsembleModel's accuracy."""
+    preds = model.predict(X)
+    return float(accuracy_score(y, preds))
+
+
 def build_loader(config: AppConfig):  # noqa: ANN201
     """Construct the appropriate loader based on config."""
     loader = config.data.loader
@@ -42,7 +62,9 @@ def build_loader(config: AppConfig):  # noqa: ANN201
     if loader == "odds_api":
         return OddsAPILoader(config.data.api_base_url, config.data.api_key or "")
     if loader == "action_network":
-        return ActionNetworkLoader(config.data.api_base_url, config.data.api_key or "")
+        return ActionNetworkLoader(
+            config.data.api_base_url, config.data.api_key or "", config.data.email or ""
+        )
     if loader == "bets_api":
         return BetsAPILoader(config.data.api_base_url, config.data.api_key or "")
     if loader == "mlb_stats":
@@ -173,26 +195,32 @@ def main() -> None:
         from mlbv1.models.ensemble import EnsembleTrainer
         from mlbv1.models.predictor import load_model
 
-        base_models = []
+        loaded_models = []
         for name in ALL_MODELS:
             with contextlib.suppress(FileNotFoundError):
-                base_models.append(load_model(f"artifacts/models/{name}.pkl"))
-        if len(base_models) >= 2:
+                loaded_models.append(load_model(f"artifacts/models/{name}.pkl"))
+        if len(loaded_models) >= 2:
             et = EnsembleTrainer()
-            voting = et.build_voting_ensemble(base_models, train_features, train_target)
-            trainer.save(voting)
-            vacc = trainer.evaluate(voting, test_features, test_target)
+            # Convert TrainedModel -> (name, classifier) tuples
+            base_pairs: list[tuple[str, Any]] = [
+                (m.name, m.model) for m in loaded_models
+            ]
+            feature_names = list(train_features.columns)
+
+            voting = et.build_voting_ensemble(base_pairs, feature_names)
+            _save_ensemble(voting, trainer.output_dir)
+            vacc = _evaluate_ensemble(voting, test_features, test_target)
             logger.info("Voting ensemble accuracy: %.3f", vacc)
 
             stacking = et.build_stacking_ensemble(
-                base_models, train_features, train_target
+                base_pairs, train_features, train_target, feature_names
             )
-            trainer.save(stacking)
-            sacc = trainer.evaluate(stacking, test_features, test_target)
+            _save_ensemble(stacking, trainer.output_dir)
+            sacc = _evaluate_ensemble(stacking, test_features, test_target)
             logger.info("Stacking ensemble accuracy: %.3f", sacc)
         else:
             logger.warning(
-                "Need ≥2 base models for ensemble — only %d found", len(base_models)
+                "Need ≥2 base models for ensemble — only %d found", len(loaded_models)
             )
 
     logger.info("Training complete — artifacts saved to artifacts/models/")

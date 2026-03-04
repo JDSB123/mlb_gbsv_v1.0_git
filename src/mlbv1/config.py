@@ -33,6 +33,7 @@ _load_dotenv()
 _LOADER_API_KEY_MAP: dict[str, str] = {
     "odds_api": "ODDS_API_KEY",
     "action_network": "ACTION_NETWORK_PASSWORD",
+    "action_network_email": "ACTION_NETWORK_EMAIL",
     "bets_api": "BETS_API_KEY",
 }
 
@@ -155,6 +156,7 @@ class DataConfig:
     input_path: str | None = None
     api_key: str | None = None
     api_base_url: str | None = None
+    email: str | None = None
 
 
 @dataclass(frozen=True)
@@ -231,6 +233,22 @@ class AppConfig:
         payload = self.to_dict()
         if data:
             payload["data"].update(data)
+            # If loader is changed but credentials are not explicitly provided,
+            # auto-resolve the right env-backed credentials for that loader.
+            loader = payload["data"].get("loader")
+            if loader:
+                if "api_key" not in data:
+                    payload["data"]["api_key"] = os.getenv("MLB_API_KEY") or os.getenv(
+                        _LOADER_API_KEY_MAP.get(loader, ""),
+                        "",
+                    )
+                if "api_base_url" not in data:
+                    payload["data"]["api_base_url"] = os.getenv(
+                        "MLB_API_BASE_URL",
+                        _LOADER_BASE_URL_MAP.get(loader, ""),
+                    )
+                if "email" not in data and loader == "action_network":
+                    payload["data"]["email"] = os.getenv("MLB_EMAIL", "")
         if model:
             payload["model"].update(model)
         return AppConfig._from_dict(payload)
@@ -251,6 +269,9 @@ class AppConfig:
         api_base_url = os.getenv("MLB_API_BASE_URL") or _LOADER_BASE_URL_MAP.get(
             loader, ""
         )
+        email = os.getenv("MLB_EMAIL") or os.getenv(
+            _LOADER_API_KEY_MAP.get("action_network_email", ""), ""
+        )
 
         env_payload: dict[str, Any] = {
             "data": {
@@ -258,6 +279,7 @@ class AppConfig:
                 "input_path": os.getenv("MLB_INPUT_PATH"),
                 "api_key": api_key,
                 "api_base_url": api_base_url,
+                "email": email,
             },
             "model": {
                 "type": os.getenv("MLB_MODEL_TYPE", "all"),

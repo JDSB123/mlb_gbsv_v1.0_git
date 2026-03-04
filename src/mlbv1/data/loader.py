@@ -9,6 +9,7 @@ from __future__ import annotations
 import http.client
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -19,6 +20,8 @@ import urllib.request
 import random as _random_mod
 
 import pandas as pd
+
+from mlbv1.data.mapping import normalize_team, get_stadium_info
 
 logger = logging.getLogger(__name__)
 
@@ -159,33 +162,95 @@ class OddsAPILoader(BaseLoader):
     """
 
     BASE = "https://api.the-odds-api.com/v4"
+    CORE_MARKETS = "spreads,h2h"
+    F5_MARKET_CANDIDATES = [
+        "h2h_1st_5_innings,spreads_1st_5_innings,totals_1st_5_innings",
+        "h2h_1st_5_innings,spreads_1st_5_innings",
+        "h2h_1st_half,spreads_1st_half,totals_1st_half",
+        "h2h_1st_half,spreads_1st_half",
+    ]
 
     def __init__(self, base_url: str | None = None, api_key: str = "") -> None:
         self.base_url = (base_url or self.BASE).rstrip("/")
         self.api_key = api_key
 
-    def load(self) -> pd.DataFrame:
-        """Upcoming MLB odds (spreads + h2h moneylines)."""
+    def _get_odds_payload(
+        self,
+        markets: str,
+        *,
+        suppress_errors: bool = False,
+    ) -> list[dict[str, Any]]:
         params = urlencode(
             {
                 "apiKey": self.api_key,
                 "regions": "us",
-                "markets": "spreads,h2h",
+                "markets": markets,
                 "oddsFormat": "american",
             }
         )
         url = f"{self.base_url}/sports/baseball_mlb/odds/?{params}"
-        data = self._http_get_json(url)
+        if suppress_errors:
+            try:
+                req = urllib.request.Request(url, headers={})
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+            except Exception as exc:
+                logger.debug(
+                    "Optional Odds API markets '%s' unavailable: %s", markets, exc
+                )
+                return []
+        else:
+            data = self._http_get_json(url)
+
         if not isinstance(data, list):
             raise DataLoaderError("Odds API payload is not a list")
-        return self._normalize(data)
+        return data
 
-    def load_scores(self) -> pd.DataFrame:
+    def load(self) -> pd.DataFrame:
+        """Upcoming MLB odds (full game + best-effort F5 markets)."""
+        if not self.api_key:
+            raise DataLoaderError(
+                "ODDS_API_KEY is missing. Set it in environment or config before using odds_api loader."
+            )
+
+        base_payload = self._get_odds_payload(self.CORE_MARKETS)
+
+        # Attempt full-game totals in a safe, no-retry mode.
+        totals_payload = self._get_odds_payload("totals", suppress_errors=True)
+        if totals_payload:
+            base_payload = _merge_odds_payloads(base_payload, totals_payload)
+
+        # F5 keys vary by provider/season. Probe safely without breaking core odds.
+        f5_payload: list[dict[str, Any]] = []
+        # If user knows their account's exact F5 keys, use them first.
+        configured_f5 = os.getenv("ODDS_API_F5_MARKETS", "").strip()
+        candidates = [configured_f5] if configured_f5 else []
+        candidates.extend(self.F5_MARKET_CANDIDATES)
+
+        for candidate in candidates:
+            if not candidate:
+                continue
+            f5_payload = self._get_odds_payload(candidate, suppress_errors=True)
+            if f5_payload:
+                logger.info("Loaded F5 markets using Odds API keys: %s", candidate)
+                break
+
+        if f5_payload:
+            base_payload = _merge_odds_payloads(base_payload, f5_payload)
+
+        return self._normalize(base_payload)
+
+    def load_scores(self, days_from: int = 3) -> pd.DataFrame:
         """Completed games with final scores (for settling)."""
+        if not self.api_key:
+            raise DataLoaderError(
+                "ODDS_API_KEY is missing. Cannot fetch scores for settlement."
+            )
+
         params = urlencode(
             {
                 "apiKey": self.api_key,
-                "daysFrom": "3",
+                "daysFrom": str(days_from),
             }
         )
         url = f"{self.base_url}/sports/baseball_mlb/scores/?{params}"
@@ -194,16 +259,30 @@ class OddsAPILoader(BaseLoader):
             raise DataLoaderError("Odds API scores payload is not a list")
         return self._normalize(data)
 
+    def load_props(self, event_id: str) -> dict[str, Any]:
+        """Fetch premium player props for a specific event."""
+        params = urlencode(
+            {
+                "apiKey": self.api_key,
+                "regions": "us",
+                "markets": "batter_home_runs,pitcher_strikeouts,batter_hits,pitcher_walks",
+                "oddsFormat": "american",
+            }
+        )
+        url = f"{self.base_url}/sports/baseball_mlb/events/{event_id}/odds/?{params}"
+        return self._http_get_json(url)
+
     def _normalize(self, payload: Iterable[dict[str, Any]]) -> pd.DataFrame:
         records: list[dict[str, Any]] = []
         for item in payload:
-            spread = _extract_spread(item)
-            home_ml, away_ml = _extract_h2h_moneylines(item)
+            markets = _extract_all_markets(item)
+            home_team = normalize_team(item.get("home_team", ""))
+            away_team = normalize_team(item.get("away_team", ""))
             records.append(
                 {
                     "game_date": item.get("commence_time"),
-                    "home_team": item.get("home_team", ""),
-                    "away_team": item.get("away_team", ""),
+                    "home_team": home_team,
+                    "away_team": away_team,
                     "home_score": (
                         item.get("scores", [{}])[0].get("score", 0)
                         if item.get("scores")
@@ -214,9 +293,18 @@ class OddsAPILoader(BaseLoader):
                         if item.get("scores") and len(item.get("scores", [])) > 1
                         else 0
                     ),
-                    "spread": spread,
-                    "home_moneyline": home_ml,
-                    "away_moneyline": away_ml,
+                    "spread": markets.get("spread", 0.0),
+                    "home_moneyline": markets.get("home_moneyline", -110),
+                    "away_moneyline": markets.get("away_moneyline", -110),
+                    "total_runs": markets.get("total_runs", 0.0),
+                    "over_odds": markets.get("over_odds", -110),
+                    "under_odds": markets.get("under_odds", -110),
+                    "f5_spread": markets.get("f5_spread", 0.0),
+                    "f5_home_moneyline": markets.get("f5_home_moneyline", -110),
+                    "f5_away_moneyline": markets.get("f5_away_moneyline", -110),
+                    "f5_total_runs": markets.get("f5_total_runs", 0.0),
+                    "f5_over_odds": markets.get("f5_over_odds", -110),
+                    "f5_under_odds": markets.get("f5_under_odds", -110),
                 }
             )
         df = pd.DataFrame.from_records(records)
@@ -224,6 +312,30 @@ class OddsAPILoader(BaseLoader):
             return self._validate(_empty_df())
         df["game_date"] = pd.to_datetime(df["game_date"], utc=True)
         return self._validate(df)
+
+
+class OddsAPIHistoricalLoader(OddsAPILoader):
+    """Premium loader for historical odds snapshots."""
+
+    def load_historical(self, target_date: str) -> pd.DataFrame:
+        """
+        Fetch odds as they appeared at a specific ISO UTC timestamp.
+        Costs 10 credits per call.
+        """
+        params = urlencode(
+            {
+                "apiKey": self.api_key,
+                "regions": "us",
+                "markets": "spreads,h2h,totals",
+                "oddsFormat": "american",
+                "date": target_date,
+            }
+        )
+        url = f"{self.base_url}/historical/sports/baseball_mlb/odds/?{params}"
+        logger.warning(f"Premium historical call made for {target_date} (10 credits)")
+        response = self._http_get_json(url)
+        data = response.get("data", [])
+        return self._normalize(data)
 
 
 # ---------------------------------------------------------------------------
@@ -259,27 +371,48 @@ class BetsAPILoader(BaseLoader):
             raise DataLoaderError("BetsAPI payload is not a list")
         return self._normalize(events)
 
+    def load_odds(self, event_id: str) -> dict[str, Any]:
+        """Fetch odds for a specific event from BetsAPI."""
+        params = urlencode(
+            {
+                "token": self.api_key,
+                "event_id": event_id,
+            }
+        )
+        url = f"{self.base_url}/v3/event/odds?{params}"
+        return self._http_get_json(url)
+
     def _normalize(self, events: list[dict[str, Any]]) -> pd.DataFrame:
         records: list[dict[str, Any]] = []
         for ev in events:
             home_info = ev.get("home", {})
             away_info = ev.get("away", {})
+
+            # Extract basic odds if available in the event object
+            # BetsAPI often nests odds under 'odds' or requires a separate call
+            odds_data = ev.get("odds", {})
+            main_odds = odds_data.get("kick_off", {})
+
             records.append(
                 {
                     "game_date": datetime.utcfromtimestamp(
                         int(ev.get("time", 0))
                     ).isoformat(),
-                    "home_team": home_info.get("name", ""),
-                    "away_team": away_info.get("name", ""),
+                    "home_team": normalize_team(home_info.get("name", "")),
+                    "away_team": normalize_team(away_info.get("name", "")),
                     "home_score": (
                         int(ev.get("ss", "0-0").split("-")[0]) if ev.get("ss") else 0
                     ),
                     "away_score": (
                         int(ev.get("ss", "0-0").split("-")[1]) if ev.get("ss") else 0
                     ),
-                    "spread": 0.0,
-                    "home_moneyline": -110,
-                    "away_moneyline": -110,
+                    "spread": float(main_odds.get("spread", {}).get("home_od", 0.0)),
+                    "home_moneyline": int(
+                        main_odds.get("moneyline", {}).get("home_od", -110)
+                    ),
+                    "away_moneyline": int(
+                        main_odds.get("moneyline", {}).get("away_od", -110)
+                    ),
                 }
             )
         df = pd.DataFrame.from_records(records)
@@ -297,20 +430,45 @@ class BetsAPILoader(BaseLoader):
 class ActionNetworkLoader(BaseLoader):
     """Load MLB odds from Action Network (session-based auth).
 
-    Uses email + password to establish a session cookie, then fetches
+    Uses email + password to establish a session bearer token, then fetches
     the MLB scoreboard endpoint.
     """
 
     BASE = "https://api.actionnetwork.com"
 
-    def __init__(self, base_url: str | None = None, api_key: str = "") -> None:
+    def __init__(
+        self, base_url: str | None = None, api_key: str = "", email: str = ""
+    ) -> None:
         self.base_url = (base_url or self.BASE).rstrip("/")
-        self.api_key = api_key
+        self.api_key = api_key  # password if email is provided
+        self.email = email
+        self._token: Optional[str] = None
+
+    def _login(self) -> str:
+        """Establish session. Returns bearer token."""
+        if not self.email or not self.api_key:
+            return ""
+
+        url = f"{self.base_url}/web/v1/users/login"
+        data = json.dumps({"email": self.email, "password": self.api_key}).encode(
+            "utf-8"
+        )
+        req = urllib.request.Request(
+            url, data=data, headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req) as resp:
+            data = json.loads(resp.read().decode())
+            self._token = data.get("token")
+            return self._token or ""
 
     def load(self) -> pd.DataFrame:
+        if not self._token:
+            self._login()
+
         url = f"{self.base_url}/web/v1/scoreboard/mlb"
+        headers = {"Authorization": f"Bearer {self._token}"} if self._token else {}
         try:
-            payload = self._http_get_json(url, headers={"Authorization": self.api_key})
+            payload = self._http_get_json(url, headers=headers)
         except DataLoaderError:
             logger.warning("ActionNetwork request failed; returning empty frame")
             return self._validate(_empty_df())
@@ -348,6 +506,14 @@ class MLBStatsAPILoader(BaseLoader):
         self.days_back = days_back
         self._start_date = start_date
         self._end_date = end_date
+
+    @classmethod
+    def load_historical_season(cls, year: int) -> pd.DataFrame:
+        """Load a complete MLB season by year (e.g., 2024, 2023)."""
+        start_date = f"{year}-03-28"  # Opening day
+        end_date = f"{year}-10-02"  # End of regular season
+        loader = cls(start_date=start_date, end_date=end_date)
+        return loader.load()
 
     def load(self) -> pd.DataFrame:
         if self._start_date and self._end_date:
@@ -410,6 +576,17 @@ class MLBStatsAPILoader(BaseLoader):
         linescore = game.get("linescore", {})
         home_runs = linescore.get("teams", {}).get("home", {}).get("runs", 0)
         away_runs = linescore.get("teams", {}).get("away", {}).get("runs", 0)
+
+        # Extract pitcher stats if available
+        decisions = game.get("decisions", {})
+        home_pitcher = decisions.get("winner", {}) if "winner" in decisions else {}
+        away_pitcher = decisions.get("loser", {}) if "loser" in decisions else {}
+
+        home_pitcher_era = MLBStatsAPILoader._get_pitcher_stat(home_pitcher, "era")
+        away_pitcher_era = MLBStatsAPILoader._get_pitcher_stat(away_pitcher, "era")
+        home_pitcher_wins = MLBStatsAPILoader._get_pitcher_stat(home_pitcher, "wins")
+        away_pitcher_wins = MLBStatsAPILoader._get_pitcher_stat(away_pitcher, "wins")
+
         return {
             "game_date": game.get("gameDate", ""),
             "home_team": home.get("team", {}).get(
@@ -423,7 +600,21 @@ class MLBStatsAPILoader(BaseLoader):
             "spread": 0.0,
             "home_moneyline": -110,
             "away_moneyline": -110,
+            "home_pitcher_era": home_pitcher_era,
+            "away_pitcher_era": away_pitcher_era,
+            "home_pitcher_wins": home_pitcher_wins,
+            "away_pitcher_wins": away_pitcher_wins,
         }
+
+    @staticmethod
+    def _get_pitcher_stat(pitcher: dict[str, Any], stat_name: str) -> float:
+        """Safely extract pitcher statistic with default fallback."""
+        try:
+            stats = pitcher.get("seasonStats", {}).get("pitching", {})
+            value = stats.get(stat_name, 0.0)
+            return float(value) if value else 0.0
+        except (TypeError, ValueError, KeyError):
+            return 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -601,7 +792,76 @@ class SyntheticDataLoader(BaseLoader):
 
 def _empty_df() -> pd.DataFrame:
     """Return an empty DataFrame with all required columns."""
-    return pd.DataFrame({col: pd.Series(dtype="object") for col in REQUIRED_COLUMNS})
+    from mlbv1.data.preprocessor import REQUIRED_COLUMNS, OPTIONAL_COLUMNS
+
+    cols = REQUIRED_COLUMNS + OPTIONAL_COLUMNS
+    return pd.DataFrame({col: pd.Series(dtype="object") for col in cols})
+
+
+def _extract_all_markets(item: dict[str, Any]) -> dict[str, float]:
+    """Extract full game and F5 markets: ML, spread, totals."""
+    res = {
+        "spread": 0.0,
+        "home_moneyline": -110.0,
+        "away_moneyline": -110.0,
+        "total_runs": 0.0,
+        "over_odds": -110.0,
+        "under_odds": -110.0,
+        "f5_spread": 0.0,
+        "f5_home_moneyline": -110.0,
+        "f5_away_moneyline": -110.0,
+        "f5_total_runs": 0.0,
+        "f5_over_odds": -110.0,
+        "f5_under_odds": -110.0,
+    }
+    home = item.get("home_team")
+    away = item.get("away_team")
+
+    for bm in item.get("bookmakers", []):
+        for market in bm.get("markets", []):
+            mkey = market.get("key")
+            outcomes = market.get("outcomes", [])
+
+            if mkey == "spreads":
+                for o in outcomes:
+                    if o.get("name") == home:
+                        res["spread"] = float(o.get("point", res["spread"]))
+            elif mkey == "h2h":
+                for o in outcomes:
+                    price = float(o.get("price", -110))
+                    if o.get("name") == home:
+                        res["home_moneyline"] = price
+                    elif o.get("name") == away:
+                        res["away_moneyline"] = price
+            elif mkey == "totals":
+                for o in outcomes:
+                    res["total_runs"] = float(o.get("point", res["total_runs"]))
+                    if str(o.get("name", "")).lower() == "over":
+                        res["over_odds"] = float(o.get("price", -110))
+                    elif str(o.get("name", "")).lower() == "under":
+                        res["under_odds"] = float(o.get("price", -110))
+
+            # F5 markets
+            elif mkey in {"spreads_1st_half", "spreads_1st_5_innings"}:
+                for o in outcomes:
+                    if o.get("name") == home:
+                        res["f5_spread"] = float(o.get("point", res["f5_spread"]))
+            elif mkey in {"h2h_1st_half", "h2h_1st_5_innings"}:
+                for o in outcomes:
+                    price = float(o.get("price", -110))
+                    if o.get("name") == home:
+                        res["f5_home_moneyline"] = price
+                    elif o.get("name") == away:
+                        res["f5_away_moneyline"] = price
+            elif mkey in {"totals_1st_half", "totals_1st_5_innings"}:
+                for o in outcomes:
+                    res["f5_total_runs"] = float(o.get("point", res["f5_total_runs"]))
+                    if str(o.get("name", "")).lower() == "over":
+                        res["f5_over_odds"] = float(o.get("price", -110))
+                    elif str(o.get("name", "")).lower() == "under":
+                        res["f5_under_odds"] = float(o.get("price", -110))
+
+    return res
 
 
 def _extract_spread(item: dict[str, Any]) -> float:
@@ -635,3 +895,34 @@ def _extract_moneyline(item: dict[str, Any], side: str) -> int:
     """Legacy helper kept for backward compat."""
     moneylines = item.get("moneyline") or {}
     return int(moneylines.get(side, -110))
+
+
+def _merge_odds_payloads(
+    base_payload: list[dict[str, Any]],
+    extra_payload: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Merge bookmakers/markets from *extra_payload* into *base_payload* by event id."""
+    merged = {str(item.get("id", "")): dict(item) for item in base_payload}
+    for extra in extra_payload:
+        event_id = str(extra.get("id", ""))
+        if not event_id:
+            continue
+        if event_id not in merged:
+            merged[event_id] = dict(extra)
+            continue
+
+        base_item = merged[event_id]
+        base_bms = {bm.get("key"): bm for bm in base_item.get("bookmakers", [])}
+        for extra_bm in extra.get("bookmakers", []):
+            bm_key = extra_bm.get("key")
+            if bm_key not in base_bms:
+                base_item.setdefault("bookmakers", []).append(extra_bm)
+                continue
+            base_market_keys = {
+                m.get("key") for m in base_bms[bm_key].get("markets", [])
+            }
+            for market in extra_bm.get("markets", []):
+                if market.get("key") not in base_market_keys:
+                    base_bms[bm_key].setdefault("markets", []).append(market)
+
+    return list(merged.values())

@@ -18,6 +18,21 @@ REQUIRED_COLUMNS = [
     "away_moneyline",
 ]
 
+# Supported columns moving forward
+OPTIONAL_COLUMNS = [
+    "total_runs",
+    "over_odds",
+    "under_odds",
+    "f5_spread",
+    "f5_home_moneyline",
+    "f5_away_moneyline",
+    "f5_total_runs",
+    "f5_over_odds",
+    "f5_under_odds",
+    "f5_home_score",
+    "f5_away_score",
+]
+
 
 class PreprocessingError(ValueError):
     """Raised when preprocessing fails."""
@@ -30,6 +45,7 @@ class ProcessedData:
     features: pd.DataFrame
     target: pd.Series
     metadata: pd.DataFrame
+    targets: pd.DataFrame | None = None  # Holds all market targets
 
 
 def validate_schema(df: pd.DataFrame) -> None:
@@ -50,15 +66,76 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
         pd.to_numeric(df["away_score"], errors="coerce").fillna(0).astype(int)
     )
     df["spread"] = pd.to_numeric(df["spread"], errors="coerce").fillna(0.0)
+
+    # Optional odds/line columns (if present)
+    optional_numeric = [
+        "total_runs",
+        "over_odds",
+        "under_odds",
+        "f5_spread",
+        "f5_home_moneyline",
+        "f5_away_moneyline",
+        "f5_total_runs",
+        "f5_over_odds",
+        "f5_under_odds",
+        "f5_home_score",
+        "f5_away_score",
+    ]
+    for col in optional_numeric:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
     df["game_date"] = pd.to_datetime(df["game_date"], utc=True)
     df = df.sort_values("game_date")
     return df
 
 
-def build_target(df: pd.DataFrame) -> pd.Series:
-    """Create binary target for spread cover."""
+def build_targets(df: pd.DataFrame) -> pd.DataFrame:
+    """Create binary targets for all markets."""
+    targets = pd.DataFrame(index=df.index)
+
+    # 1. Full Game Spread (Home Cover)
     margin = df["home_score"] - df["away_score"]
-    return (margin + df["spread"] > 0).astype(int)
+    targets["spread_cover"] = (margin + df["spread"] > 0).astype(int)
+
+    # 2. Full Game Moneyline (Home Win)
+    targets["home_win"] = (margin > 0).astype(int)
+
+    # 3. Full Game Total (Over)
+    if "total_runs" in df.columns:
+        total = df["home_score"] + df["away_score"]
+        targets["over_total"] = (
+            total > pd.to_numeric(df["total_runs"], errors="coerce").fillna(0)
+        ).astype(int)
+
+    # 4. F5 Spread & ML & Total
+    if "f5_home_score" in df.columns and "f5_away_score" in df.columns:
+        f5_margin = pd.to_numeric(df["f5_home_score"], errors="coerce").fillna(
+            0
+        ) - pd.to_numeric(df["f5_away_score"], errors="coerce").fillna(0)
+
+        if "f5_spread" in df.columns:
+            targets["f5_spread_cover"] = (
+                f5_margin + pd.to_numeric(df["f5_spread"], errors="coerce").fillna(0)
+                > 0
+            ).astype(int)
+
+        targets["f5_home_win"] = (f5_margin > 0).astype(int)
+
+        if "f5_total_runs" in df.columns:
+            f5_total = pd.to_numeric(df["f5_home_score"], errors="coerce").fillna(
+                0
+            ) + pd.to_numeric(df["f5_away_score"], errors="coerce").fillna(0)
+            targets["f5_over_total"] = (
+                f5_total > pd.to_numeric(df["f5_total_runs"], errors="coerce").fillna(0)
+            ).astype(int)
+
+    return targets
+
+
+def build_target(df: pd.DataFrame) -> pd.Series:
+    """Legacy helper returning only spread target."""
+    return build_targets(df)["spread_cover"]
 
 
 def train_test_split_time(
@@ -73,8 +150,9 @@ def train_test_split_time(
 
 
 def preprocess(df: pd.DataFrame) -> ProcessedData:
-    """Clean data and build target variable."""
+    """Clean data and build target variables."""
     df = clean_data(df)
-    target = build_target(df)
+    targets = build_targets(df)
+    target = targets["spread_cover"]
     metadata = df[["game_date", "home_team", "away_team", "spread"]].copy()
-    return ProcessedData(features=df, target=target, metadata=metadata)
+    return ProcessedData(features=df, target=target, metadata=metadata, targets=targets)

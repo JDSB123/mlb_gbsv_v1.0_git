@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS predictions (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id      TEXT    NOT NULL,
     model_name  TEXT    NOT NULL,
+    market      TEXT    NOT NULL DEFAULT 'spread',
     game_date   TEXT    NOT NULL,
     home_team   TEXT    NOT NULL,
     away_team   TEXT    NOT NULL,
@@ -36,24 +37,25 @@ CREATE TABLE IF NOT EXISTS predictions (
     -- outcome fields (filled after game)
     actual_home_score INTEGER,
     actual_away_score INTEGER,
-    actual_result     INTEGER,  -- 1 = spread covered, 0 = not
+    actual_result     INTEGER,  -- 1 = win/cover, 0 = loss
     settled           INTEGER NOT NULL DEFAULT 0,
     settled_at        TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_pred_run ON predictions(run_id);
-CREATE INDEX IF NOT EXISTS idx_pred_game ON predictions(game_date, home_team);
+CREATE INDEX IF NOT EXISTS idx_pred_game ON predictions(game_date, home_team, market);
 CREATE INDEX IF NOT EXISTS idx_pred_settled ON predictions(settled);
 
 CREATE TABLE IF NOT EXISTS runs (
-    run_id     TEXT PRIMARY KEY,
-    model_name TEXT NOT NULL,
-    loader     TEXT NOT NULL DEFAULT 'synthetic',
-    accuracy   REAL,
-    roi        REAL,
-    sharpe     REAL,
-    config_json TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    run_id        TEXT PRIMARY KEY,
+    model_name    TEXT NOT NULL,
+    target_market TEXT NOT NULL DEFAULT 'spread',
+    loader        TEXT NOT NULL DEFAULT 'synthetic',
+    accuracy      REAL,
+    roi           REAL,
+    sharpe        REAL,
+    config_json   TEXT,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS bankroll (
@@ -84,6 +86,7 @@ class PredictionRecord:
     probability: float
     home_moneyline: int = -110
     away_moneyline: int = -110
+    market: str = "spread"
 
 
 @dataclass
@@ -97,6 +100,7 @@ class RunRecord:
     roi: float | None = None
     sharpe: float | None = None
     config_json: str = "{}"
+    target_market: str = "spread"
 
 
 class TrackingDB:
@@ -124,52 +128,115 @@ class TrackingDB:
     def _init_schema(self) -> None:
         with self._connect() as conn:
             conn.executescript(_SCHEMA_SQL)
+            self._apply_migrations(conn)
         logger.info("Tracking DB initialized at %s", self.db_path)
+
+    @staticmethod
+    def _apply_migrations(conn: sqlite3.Connection) -> None:
+        """Apply additive schema migrations for existing DB files."""
+
+        def _has_column(table: str, column: str) -> bool:
+            rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+            return any(r[1] == column for r in rows)
+
+        if not _has_column("predictions", "market"):
+            conn.execute(
+                "ALTER TABLE predictions ADD COLUMN market TEXT DEFAULT 'spread'"
+            )
+
+        if not _has_column("runs", "target_market"):
+            conn.execute(
+                "ALTER TABLE runs ADD COLUMN target_market TEXT DEFAULT 'spread'"
+            )
 
     # -- writes ---------------------------------------------------------------
 
     def log_run(self, run: RunRecord) -> None:
         """Record a training/prediction run."""
         with self._connect() as conn:
-            conn.execute(
-                """INSERT OR REPLACE INTO runs
-                   (run_id, model_name, loader, accuracy, roi, sharpe, config_json)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    run.run_id,
-                    run.model_name,
-                    run.loader,
-                    run.accuracy,
-                    run.roi,
-                    run.sharpe,
-                    run.config_json,
-                ),
-            )
+            try:
+                conn.execute(
+                    """INSERT OR REPLACE INTO runs
+                       (run_id, model_name, loader, accuracy, roi, sharpe, config_json, target_market)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        run.run_id,
+                        run.model_name,
+                        run.loader,
+                        run.accuracy,
+                        run.roi,
+                        run.sharpe,
+                        run.config_json,
+                        run.target_market,
+                    ),
+                )
+            except sqlite3.OperationalError:
+                conn.execute(
+                    """INSERT OR REPLACE INTO runs
+                       (run_id, model_name, loader, accuracy, roi, sharpe, config_json)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        run.run_id,
+                        run.model_name,
+                        run.loader,
+                        run.accuracy,
+                        run.roi,
+                        run.sharpe,
+                        run.config_json,
+                    ),
+                )
 
     def log_predictions(self, predictions: list[PredictionRecord]) -> int:
         """Batch-insert predictions. Returns count inserted."""
+        if not predictions:
+            return 0
+
         with self._connect() as conn:
-            conn.executemany(
-                """INSERT INTO predictions
-                   (run_id, model_name, game_date, home_team, away_team,
-                    spread, prediction, probability, home_moneyline, away_moneyline)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                [
-                    (
-                        p.run_id,
-                        p.model_name,
-                        p.game_date,
-                        p.home_team,
-                        p.away_team,
-                        p.spread,
-                        p.prediction,
-                        p.probability,
-                        p.home_moneyline,
-                        p.away_moneyline,
-                    )
-                    for p in predictions
-                ],
-            )
+            try:
+                conn.executemany(
+                    """INSERT INTO predictions
+                       (run_id, model_name, game_date, home_team, away_team,
+                        spread, prediction, probability, home_moneyline, away_moneyline, market)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    [
+                        (
+                            p.run_id,
+                            p.model_name,
+                            p.game_date,
+                            p.home_team,
+                            p.away_team,
+                            p.spread,
+                            p.prediction,
+                            p.probability,
+                            p.home_moneyline,
+                            p.away_moneyline,
+                            p.market,
+                        )
+                        for p in predictions
+                    ],
+                )
+            except sqlite3.OperationalError:
+                conn.executemany(
+                    """INSERT INTO predictions
+                       (run_id, model_name, game_date, home_team, away_team,
+                        spread, prediction, probability, home_moneyline, away_moneyline)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    [
+                        (
+                            p.run_id,
+                            p.model_name,
+                            p.game_date,
+                            p.home_team,
+                            p.away_team,
+                            p.spread,
+                            p.prediction,
+                            p.probability,
+                            p.home_moneyline,
+                            p.away_moneyline,
+                        )
+                        for p in predictions
+                    ],
+                )
         logger.info(
             "Logged %d predictions for run %s", len(predictions), predictions[0].run_id
         )
@@ -184,17 +251,33 @@ class TrackingDB:
     ) -> int:
         """Settle predictions for a specific game with actual scores."""
         margin = actual_home_score - actual_away_score
+        total_runs = actual_home_score + actual_away_score
         now = datetime.now(tz=UTC).isoformat()
         with self._connect() as conn:
             # Fetch matching unsettled predictions
             rows = conn.execute(
-                """SELECT id, spread FROM predictions
+                """SELECT id, spread, COALESCE(market, 'spread') AS market FROM predictions
                    WHERE game_date LIKE ? AND home_team = ? AND settled = 0""",
                 (f"{game_date}%", home_team),
             ).fetchall()
             count = 0
             for row in rows:
-                actual_result = 1 if (margin + row["spread"]) > 0 else 0
+                market = str(row["market"])
+                actual_result: int | None
+
+                if market in {"f5_spread", "f5_moneyline", "f5_total"}:
+                    # F5 settlement requires inning-level score feed.
+                    continue
+
+                if market == "spread":
+                    actual_result = 1 if (margin + float(row["spread"])) > 0 else 0
+                elif market == "moneyline":
+                    actual_result = 1 if margin > 0 else 0
+                elif market == "total":
+                    actual_result = 1 if total_runs > float(row["spread"]) else 0
+                else:
+                    actual_result = 1 if (margin + float(row["spread"])) > 0 else 0
+
                 conn.execute(
                     """UPDATE predictions
                        SET actual_home_score = ?, actual_away_score = ?,

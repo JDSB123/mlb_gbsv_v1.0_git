@@ -83,7 +83,7 @@ if page == "Dashboard":
             "actual_result",
         ]
         available = [c for c in display_cols if c in df.columns]
-        st.dataframe(df[available], use_container_width=True, hide_index=True)
+        st.dataframe(df[available], width="stretch", hide_index=True)
     else:
         st.info(
             "No predictions logged yet. Run `scripts/daily_run.py` to generate predictions."
@@ -120,7 +120,7 @@ elif page == "Predictions":
     preds = db.get_predictions(settled=settled_filter, limit=filter_limit)
     if preds:
         df = pd.DataFrame(preds)
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df, width="stretch", hide_index=True)
 
         # Win/loss chart for settled
         settled_df = df[df["settled"] == 1].copy()
@@ -150,7 +150,7 @@ elif page == "Model Comparison":
     comparison = db.get_model_comparison()
     if comparison:
         df = pd.DataFrame(comparison)
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df, width="stretch", hide_index=True)
 
         st.subheader("Accuracy by Model")
         st.bar_chart(df.set_index("model_name")[["accuracy"]])
@@ -165,7 +165,7 @@ elif page == "Model Comparison":
     if runs:
         st.subheader("Training Runs")
         runs_df = pd.DataFrame(runs)
-        st.dataframe(runs_df, use_container_width=True, hide_index=True)
+        st.dataframe(runs_df, width="stretch", hide_index=True)
 
 # ---------------------------------------------------------------------------
 # Bankroll page
@@ -231,7 +231,7 @@ elif page == "Runs":
     runs = db.get_runs()
     if runs:
         df = pd.DataFrame(runs)
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df, width="stretch", hide_index=True)
 
         # Select a run to drill into
         run_ids = df["run_id"].tolist()
@@ -247,8 +247,6 @@ elif page == "Runs":
 
             if preds:
                 st.subheader("Predictions for This Run")
-                st.dataframe(
-                    pd.DataFrame(preds), use_container_width=True, hide_index=True
-                )
+                st.dataframe(pd.DataFrame(preds), width="stretch", hide_index=True)
     else:
         st.info("No runs recorded yet.")
