@@ -30,7 +30,7 @@ dev = [
   "pandas-stubs>=2.1.0",
 ]
 enrichment = [
-  "pybaseball>=2.3.0",
+  "pybaseball>=2.2.0",
 ]
 all = [
   "streamlit>=1.30.0",
@@ -39,7 +39,7 @@ all = [
   "ruff>=0.4.0",
   "mypy>=1.8.0",
   "pandas-stubs>=2.1.0",
-  "pybaseball>=2.3.0",
+  "pybaseball>=2.2.0",
 ]
 
 [project.scripts]
