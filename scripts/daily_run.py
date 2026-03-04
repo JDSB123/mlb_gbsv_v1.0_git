@@ -117,9 +117,10 @@ def main() -> None:
         all_picks = _predict_with_all_models(
             today_features, today_processed, db, run_id
         )
-        consensus_picks = _build_consensus_picks(all_picks)
+        model_weights = _build_model_weights(db)
+        consensus_picks = _build_consensus_picks(all_picks, model_weights)
         logger.info(
-            "Built %d consensus picks from %d model picks",
+            "Built %d weighted consensus picks from %d model picks",
             len(consensus_picks),
             len(all_picks),
         )
@@ -396,12 +397,49 @@ def _predict_with_all_models(
     return all_picks
 
 
-def _build_consensus_picks(all_picks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Collapse per-model picks into one consensus pick per game."""
+def _build_model_weights(db: TrackingDB, lookback_runs: int = 200) -> dict[str, float]:
+    """Build per-model weights from recent run accuracy history."""
+    runs = db.get_runs(limit=lookback_runs)
+    by_model: dict[str, list[float]] = {}
+    for run in runs:
+        model = str(run.get("model_name", "")).strip()
+        accuracy_raw = run.get("accuracy")
+        if not model or accuracy_raw is None:
+            continue
+        try:
+            accuracy = float(accuracy_raw)
+        except (TypeError, ValueError):
+            continue
+        if 0.0 <= accuracy <= 1.0:
+            by_model.setdefault(model, []).append(accuracy)
+
+    weights: dict[str, float] = {}
+    for model_name, scores in by_model.items():
+        # Keep a floor so weaker models still contribute a little.
+        weights[model_name] = max(0.05, float(sum(scores) / len(scores)))
+
+    if weights:
+        logger.info(
+            "Model weights from recent accuracy: %s",
+            ", ".join(f"{k}={v:.3f}" for k, v in sorted(weights.items())),
+        )
+    else:
+        logger.info("No historical model accuracy found; using equal weights")
+
+    return weights
+
+
+def _build_consensus_picks(
+    all_picks: list[dict[str, Any]],
+    model_weights: dict[str, float] | None = None,
+) -> list[dict[str, Any]]:
+    """Collapse per-model picks into one weighted consensus pick per game."""
     if not all_picks:
         return []
 
     frame = pd.DataFrame(all_picks)
+    weights = model_weights or {}
+    frame["model_weight"] = frame["model_name"].map(weights).fillna(1.0).astype(float)
     keys = [
         "game_date",
         "home_team",
@@ -414,10 +452,19 @@ def _build_consensus_picks(all_picks: list[dict[str, Any]]) -> list[dict[str, An
     consensus: list[dict[str, Any]] = []
     grouped = frame.groupby(keys, dropna=False, sort=False)
     for game_key, group in grouped:
-        avg_home_prob = float(group["probability"].mean())
-        avg_home_pick = float(group["prediction"].mean())
-        consensus_prediction = int(round(avg_home_pick))
-        agreement = max(avg_home_pick, 1.0 - avg_home_pick)
+        total_weight = float(group["model_weight"].sum())
+        if total_weight <= 0:
+            total_weight = float(group.shape[0])
+            group = group.assign(model_weight=1.0)
+
+        weighted_home_prob = float(
+            (group["probability"] * group["model_weight"]).sum() / total_weight
+        )
+        weighted_home_pick = float(
+            (group["prediction"] * group["model_weight"]).sum() / total_weight
+        )
+        consensus_prediction = int(round(weighted_home_pick))
+        agreement = max(weighted_home_pick, 1.0 - weighted_home_pick)
         model_names = sorted({str(name) for name in group["model_name"].tolist()})
 
         game_date, home_team, away_team, spread, home_ml, away_ml = game_key
@@ -428,13 +475,14 @@ def _build_consensus_picks(all_picks: list[dict[str, Any]]) -> list[dict[str, An
                 "away_team": str(away_team),
                 "spread": float(spread),
                 "prediction": consensus_prediction,
-                "probability": avg_home_prob,
+                "probability": weighted_home_prob,
                 "home_moneyline": int(home_ml),
                 "away_moneyline": int(away_ml),
                 "model_name": "consensus",
                 "model_count": int(group.shape[0]),
                 "agreement": float(agreement),
                 "model_names": model_names,
+                "weight_sum": total_weight,
             }
         )
 
