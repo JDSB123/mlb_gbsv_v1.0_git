@@ -11,9 +11,12 @@ on:
       - "infra/**"
 
 env:
-  ACR_NAME: mlbgbsvv1azacr
+  ACR_NAME: ${{ vars.AZURE_ACR_NAME }}
   IMAGE_NAME: mlbv1
-  RESOURCE_GROUP: mlb-gbsv-v1-az-rg
+  RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+  LOCATION: ${{ vars.AZURE_LOCATION }}
+  NAME_PREFIX: ${{ vars.AZURE_NAME_PREFIX }}
+  CONTAINER_APP_NAME: ${{ vars.AZURE_CONTAINER_APP }}
 
 jobs:
   lint-and-test:
@@ -48,29 +51,14 @@ jobs:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Ensure resource group exists
-        run: az group create --name ${{ env.RESOURCE_GROUP }} --location eastus --output none 2>/dev/null || true
-
-      - name: Check optional SP object ID secret
-        run: |
-          if [ -n "${{ secrets.AZURE_SP_OBJECT_ID }}" ]; then
-            echo "AZURE_SP_OBJECT_ID is configured"
-          else
-            echo "AZURE_SP_OBJECT_ID is not configured; proceeding without KV role assignment parameter"
-          fi
+        run: az group create --name ${{ env.RESOURCE_GROUP }} --location ${{ env.LOCATION }} --output none 2>/dev/null || true
 
       - name: Deploy Bicep
         run: |
-          if [ -n "${{ secrets.AZURE_SP_OBJECT_ID }}" ]; then
-            az deployment group create \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --template-file infra/main.bicep \
-              --parameters namePrefix=mlb-gbsv-v1-az servicePrincipalObjectId=${{ secrets.AZURE_SP_OBJECT_ID }}
-          else
-            az deployment group create \
-              --resource-group ${{ env.RESOURCE_GROUP }} \
-              --template-file infra/main.bicep \
-              --parameters namePrefix=mlb-gbsv-v1-az
-          fi
+          az deployment group create \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --template-file infra/main.bicep \
+            --parameters namePrefix=${{ env.NAME_PREFIX }} location=${{ env.LOCATION }} triggerApiKey=${{ secrets.TRIGGER_API_KEY }} allowUnauthTrigger=false
 
   build-and-push:
     needs: infra
@@ -108,6 +96,16 @@ jobs:
       - name: Update Container App image
         run: |
           az containerapp update \
-            --name mlb-gbsv-v1-az-aca \
+            --name ${{ env.CONTAINER_APP_NAME }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --image ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+      - name: Smoke test health endpoint
+        run: |
+          FQDN=$(az containerapp show \
+            --name ${{ env.CONTAINER_APP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --query properties.configuration.ingress.fqdn \
+            --output tsv)
+          test -n "$FQDN"
+          curl -fsS "https://$FQDN/health" | tee /tmp/health.json
