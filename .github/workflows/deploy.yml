@@ -59,7 +59,7 @@ jobs:
           az deployment group create \
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --template-file infra/main.bicep \
-            --parameters namePrefix=${{ env.NAME_PREFIX }} location=${{ env.LOCATION }} triggerApiKey=${{ secrets.TRIGGER_API_KEY }} allowUnauthTrigger=false
+            --parameters namePrefix=${{ env.NAME_PREFIX }} location=${{ env.LOCATION }}
 
   build-and-push:
     needs: infra
