@@ -19,6 +19,7 @@ var appInsightsName = '${namePrefix}-ai'
 var sqlServerName = replace('${namePrefix}-sql', '-', '')
 var sqlDbName = 'mlb-tracking'
 var kvSecretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
+var hasTriggerApiKey = !empty(triggerApiKey)
 
 resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
   name: acrName
@@ -168,24 +169,30 @@ resource acaApp 'Microsoft.App/containerApps@2023-05-01' = {
           passwordSecretRef: 'acr-password'
         }
       ]
-      secrets: [
-        {
-          name: 'acr-password'
-          value: acr.listCredentials().passwords[0].value
-        }
-        {
-          name: 'appinsights-connection-string'
-          value: appInsights.properties.ConnectionString
-        }
-        {
-          name: 'sql-connection-string'
-          value: 'Server=tcp:${sqlServer.properties.fullyQualifiedDomainName},1433;Database=${sqlDbName};User ID=${sqlAdminLogin};Password=${sqlAdminPassword};Encrypt=true;Connection Timeout=30;'
-        }
-        {
-          name: 'trigger-api-key'
-          value: triggerApiKey
-        }
-      ]
+      secrets: concat(
+        [
+          {
+            name: 'acr-password'
+            value: acr.listCredentials().passwords[0].value
+          }
+          {
+            name: 'appinsights-connection-string'
+            value: appInsights.properties.ConnectionString
+          }
+          {
+            name: 'sql-connection-string'
+            value: 'Server=tcp:${sqlServer.properties.fullyQualifiedDomainName},1433;Database=${sqlDbName};User ID=${sqlAdminLogin};Password=${sqlAdminPassword};Encrypt=true;Connection Timeout=30;'
+          }
+        ],
+        hasTriggerApiKey
+          ? [
+              {
+                name: 'trigger-api-key'
+                value: triggerApiKey
+              }
+            ]
+          : []
+      )
     }
     template: {
       containers: [
@@ -196,28 +203,34 @@ resource acaApp 'Microsoft.App/containerApps@2023-05-01' = {
             cpu: json('2.0')
             memory: '4Gi'
           }
-          env: [
-            {
-              name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
-              secretRef: 'appinsights-connection-string'
-            }
-            {
-              name: 'AZURE_KEY_VAULT_NAME'
-              value: kvName
-            }
-            {
-              name: 'SQL_CONNECTION_STRING'
-              secretRef: 'sql-connection-string'
-            }
-            {
-              name: 'TRIGGER_API_KEY'
-              secretRef: 'trigger-api-key'
-            }
-            {
-              name: 'ALLOW_UNAUTH_TRIGGER'
-              value: string(allowUnauthTrigger)
-            }
-          ]
+          env: concat(
+            [
+              {
+                name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+                secretRef: 'appinsights-connection-string'
+              }
+              {
+                name: 'AZURE_KEY_VAULT_NAME'
+                value: kvName
+              }
+              {
+                name: 'SQL_CONNECTION_STRING'
+                secretRef: 'sql-connection-string'
+              }
+              {
+                name: 'ALLOW_UNAUTH_TRIGGER'
+                value: string(allowUnauthTrigger)
+              }
+            ],
+            hasTriggerApiKey
+              ? [
+                  {
+                    name: 'TRIGGER_API_KEY'
+                    secretRef: 'trigger-api-key'
+                  }
+                ]
+              : []
+          )
           probes: [
             {
               type: 'Liveness'
