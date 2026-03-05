@@ -9,6 +9,7 @@ on:
       - "Dockerfile"
       - "pyproject.toml"
       - "infra/**"
+  workflow_dispatch:
 
 env:
   ACR_NAME: ${{ vars.AZURE_ACR_NAME }}
