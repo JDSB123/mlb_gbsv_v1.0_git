@@ -18,6 +18,7 @@ env:
   LOCATION: ${{ vars.AZURE_LOCATION }}
   NAME_PREFIX: ${{ vars.AZURE_NAME_PREFIX }}
   CONTAINER_APP_NAME: ${{ vars.AZURE_CONTAINER_APP }}
+  HEALTH_URL: ${{ vars.AZURE_HEALTH_URL }}
 
 jobs:
   lint-and-test:
@@ -107,6 +108,16 @@ jobs:
             --name ${{ env.CONTAINER_APP_NAME }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --query properties.configuration.ingress.fqdn \
-            --output tsv)
-          test -n "$FQDN"
-          curl -fsS "https://$FQDN/health" | tee /tmp/health.json
+            --output tsv || true)
+
+          if [ -n "$FQDN" ]; then
+            TARGET_URL="https://$FQDN/health"
+          elif [ -n "${{ env.HEALTH_URL }}" ]; then
+            TARGET_URL="${{ env.HEALTH_URL }}"
+          else
+            echo "No ingress FQDN and HEALTH_URL is not configured"
+            exit 1
+          fi
+
+          echo "Smoke testing $TARGET_URL"
+          curl -fsS "$TARGET_URL" | tee /tmp/health.json
