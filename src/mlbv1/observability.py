@@ -25,7 +25,7 @@ def configure_telemetry() -> None:
 
     try:
         from azure.monitor.opentelemetry import (
-                configure_azure_monitor,
+            configure_azure_monitor,
         )
         from opentelemetry import metrics, trace
         from opentelemetry.sdk.metrics import MeterProvider

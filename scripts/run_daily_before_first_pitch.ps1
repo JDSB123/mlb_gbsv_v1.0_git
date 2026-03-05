@@ -97,13 +97,13 @@ $nowUtc = (Get-Date).ToUniversalTime()
 $targetUtc = if ($firstPitchUtc) { $firstPitchUtc.AddHours(-1) } else { $null }
 
 $scheduleMeta = [ordered]@{
-  generated_at_utc = (Get-Date).ToUniversalTime().ToString("o")
-  first_pitch_utc = if ($firstPitchUtc) { $firstPitchUtc.ToString("o") } else { $null }
-  trigger_target_utc = if ($targetUtc) { $targetUtc.ToString("o") } else { $null }
-  skip_wait = [bool]$SkipWait
+  generated_at_utc          = (Get-Date).ToUniversalTime().ToString("o")
+  first_pitch_utc           = if ($firstPitchUtc) { $firstPitchUtc.ToString("o") } else { $null }
+  trigger_target_utc        = if ($targetUtc) { $targetUtc.ToString("o") } else { $null }
+  skip_wait                 = [bool]$SkipWait
   force_trigger_if_no_games = [bool]$ForceTriggerIfNoGames
-  trigger_url = $TriggerUrl
-  health_url = $HealthUrl
+  trigger_url               = $TriggerUrl
+  health_url                = $HealthUrl
 }
 $scheduleMeta | ConvertTo-Json -Depth 5 | Out-File -FilePath (Join-Path $outputDir "$runStamp-schedule.json") -Encoding utf8
 
