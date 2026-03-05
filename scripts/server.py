@@ -153,8 +153,8 @@ def trigger_pipeline() -> ResponseReturnValue:
 
         # Run in background thread to avoid blocking the health endpoint
         def _run():
+            old_argv = sys.argv[:]
             try:
-                old_argv = sys.argv[:]
                 sys.argv = [str(PROJECT_ROOT / "scripts" / "daily_run.py")]
                 run_pipeline()
                 _tracking_db.finish_pipeline_run("success")

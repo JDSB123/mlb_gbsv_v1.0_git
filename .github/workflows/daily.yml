@@ -12,8 +12,8 @@ jobs:
     steps:
       - name: Trigger secured endpoint
         env:
-          TRIGGER_URL: ${{ vars.MLB_TRIGGER_URL }}
-          TRIGGER_API_KEY: ${{ secrets.TRIGGER_API_KEY }}
+          TRIGGER_URL: ${{ vars['MLB_TRIGGER_URL'] }}
+          TRIGGER_API_KEY: ${{ secrets['TRIGGER_API_KEY'] }}
         run: |
           test -n "$TRIGGER_URL"
           test -n "$TRIGGER_API_KEY"

@@ -18,7 +18,7 @@ env:
   LOCATION: ${{ vars.AZURE_LOCATION }}
   NAME_PREFIX: ${{ vars.AZURE_NAME_PREFIX }}
   CONTAINER_APP_NAME: ${{ vars.AZURE_CONTAINER_APP }}
-  HEALTH_URL: ${{ vars.AZURE_HEALTH_URL }}
+  HEALTH_URL: ${{ vars['AZURE_HEALTH_URL'] }}
 
 jobs:
   lint-and-test:

@@ -83,9 +83,9 @@ notepad .env
 
 Fill in at minimum:
 
-- `ODDS_API_KEY` - Get from https://the-odds-api.com/
-- `BETS_API_KEY` - Get from https://betsapi.com/
-- `VISUAL_CROSSING_API_KEY` - Get from https://www.visualcrossing.com/
+- `ODDS_API_KEY` - Get from [The Odds API](https://the-odds-api.com/)
+- `BETS_API_KEY` - Get from [BetsAPI](https://betsapi.com/)
+- `VISUAL_CROSSING_API_KEY` - Get from [Visual Crossing](https://www.visualcrossing.com/)
 - `DISCORD_WEBHOOK_URL` (optional) - For bet alerts
 
 #### **Step 2: Deploy Infrastructure**
@@ -171,7 +171,7 @@ Steps:
 
 **Required Secrets** (add in GitHub repo settings):
 
-```
+```text
 AZURE_CREDENTIALS          # Service principal JSON
 AZURE_SUBSCRIPTION_ID      # Subscription GUID
 AZURE_RESOURCE_GROUP       # mlb-gbsv-v1-az-rg
@@ -259,7 +259,7 @@ graph TB
 - Container Registry (Basic): ~$5/month
 - Application Insights (5GB ingestion): ~$2/month
 
-**Total: ~$48/month**
+### Total: ~$48/month
 
 **External API Costs**:
 
@@ -390,10 +390,10 @@ az containerapp update -n mlb-gbsv-v1-az-aca -g mlb-gbsv-v1-az-rg --max-replicas
 
 ## Support & Resources
 
-- 📖 **Azure Container Apps Docs**: https://learn.microsoft.com/azure/container-apps/
-- 🔐 **Key Vault Best Practices**: https://learn.microsoft.com/azure/key-vault/general/best-practices
-- 📊 **Application Insights**: https://learn.microsoft.com/azure/azure-monitor/app/app-insights-overview
-- 🐳 **Docker Best Practices**: https://docs.docker.com/develop/dev-best-practices/
+- 📖 **Azure Container Apps Docs**: [Microsoft Learn](https://learn.microsoft.com/azure/container-apps/)
+- 🔐 **Key Vault Best Practices**: [Microsoft Learn](https://learn.microsoft.com/azure/key-vault/general/best-practices)
+- 📊 **Application Insights**: [Microsoft Learn](https://learn.microsoft.com/azure/azure-monitor/app/app-insights-overview)
+- 🐳 **Docker Best Practices**: [Docker Docs](https://docs.docker.com/develop/dev-best-practices/)
 
 ---
 
