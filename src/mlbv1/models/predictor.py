@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import pickle
 from dataclasses import dataclass
 from pathlib import Path
 
+import joblib
 import pandas as pd
 
 from mlbv1.models.ensemble import EnsembleModel
@@ -25,8 +25,7 @@ def load_model(path: str) -> TrainedModel | EnsembleModel:
     model_path = Path(path)
     if not model_path.exists():
         raise FileNotFoundError(f"Model not found: {model_path}")
-    with open(model_path, "rb") as handle:
-        model = pickle.load(handle)  # noqa: S301
+    model = joblib.load(model_path)
     if not isinstance(model, (TrainedModel, EnsembleModel)):
         raise TypeError("Invalid model file")
     return model

@@ -69,6 +69,16 @@ CREATE TABLE IF NOT EXISTS bankroll (
 );
 
 CREATE INDEX IF NOT EXISTS idx_bankroll_date ON bankroll(game_date);
+
+CREATE TABLE IF NOT EXISTS pipeline_status (
+    id               INTEGER PRIMARY KEY CHECK (id = 1),
+    last_run         TEXT,
+    last_run_status  TEXT NOT NULL DEFAULT 'never_run',
+    updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+INSERT OR IGNORE INTO pipeline_status (id, last_run, last_run_status)
+VALUES (1, NULL, 'never_run');
 """
 
 
@@ -148,6 +158,19 @@ class TrackingDB:
             conn.execute(
                 "ALTER TABLE runs ADD COLUMN target_market TEXT DEFAULT 'spread'"
             )
+
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS pipeline_status (
+                   id               INTEGER PRIMARY KEY CHECK (id = 1),
+                   last_run         TEXT,
+                   last_run_status  TEXT NOT NULL DEFAULT 'never_run',
+                   updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+               )"""
+        )
+        conn.execute(
+            """INSERT OR IGNORE INTO pipeline_status (id, last_run, last_run_status)
+               VALUES (1, NULL, 'never_run')"""
+        )
 
     # -- writes ---------------------------------------------------------------
 
@@ -311,6 +334,37 @@ class TrackingDB:
                 (run_id, game_date, bet_amount, payout, balance),
             )
 
+    def try_start_pipeline(self) -> bool:
+        """Atomically mark pipeline as running if no run is currently active."""
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT last_run_status FROM pipeline_status WHERE id = 1"
+            ).fetchone()
+            if row and row["last_run_status"] == "running":
+                return False
+
+            now = datetime.now(tz=UTC).isoformat()
+            conn.execute(
+                """UPDATE pipeline_status
+                   SET last_run_status = 'running', updated_at = ?
+                   WHERE id = 1""",
+                (now,),
+            )
+            return True
+
+    def finish_pipeline_run(self, status: str) -> None:
+        """Mark pipeline run completion with final status."""
+        final_status = status if status in {"success", "error"} else "error"
+        now = datetime.now(tz=UTC).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """UPDATE pipeline_status
+                   SET last_run = ?, last_run_status = ?, updated_at = ?
+                   WHERE id = 1""",
+                (now, final_status, now),
+            )
+
     # -- reads ----------------------------------------------------------------
 
     def get_predictions(
@@ -415,3 +469,19 @@ class TrackingDB:
                    ORDER BY accuracy DESC"""
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def get_pipeline_status(self) -> dict[str, Any]:
+        """Get the shared pipeline status used by health checks."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT last_run, last_run_status, updated_at FROM pipeline_status WHERE id = 1"
+            ).fetchone()
+
+        if not row:
+            return {
+                "last_run": None,
+                "last_run_status": "never_run",
+                "updated_at": datetime.now(tz=UTC).isoformat(),
+            }
+
+        return dict(row)

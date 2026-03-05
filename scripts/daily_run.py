@@ -21,9 +21,6 @@ import pandas as pd
 
 from mlbv1.alerts.manager import AlertManager
 from mlbv1.config import AppConfig
-from mlbv1.data.historical_enrichment import (
-    enrich_training_data_with_historical_sources,
-)
 from mlbv1.data.loader import (
     BetsAPILoader,
     MLBStatsAPILoader,
@@ -36,23 +33,18 @@ from mlbv1.features.engineer import FeatureSet, engineer_features
 from mlbv1.metrics import evaluate
 from mlbv1.models.predictor import load_model, predict
 from mlbv1.models.trainer import ModelTrainer
+from mlbv1.observability import configure_telemetry, track_accuracy, track_prediction
 from mlbv1.tracking.database import PredictionRecord, RunRecord, TrackingDB
 from mlbv1.tracking.roi import BankrollConfig, BankrollManager
+
+# Configure telemetry at module level
+configure_telemetry()
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
-
-MARKET_TARGET_MAP: dict[str, str] = {
-    "spread": "spread_cover",
-    "moneyline": "home_win",
-    "total": "over_total",
-    "f5_spread": "f5_spread_cover",
-    "f5_moneyline": "f5_home_win",
-    "f5_total": "f5_over_total",
-}
 
 
 def main() -> None:
@@ -84,53 +76,12 @@ def main() -> None:
         if args.settle:
             _settle_yesterday(db, config)
 
-        # Step 2: Get training data (last 90 days for recent form + real historical seasons 2024, 2023)
+        # Step 2: Get training data (last 90 days for recent form)
         logger.info("=== Step 2: Loading training data ===")
         train_df = _load_training_data(config)
-
-        # Enrich with real historical seasons (2024, 2023) for better model training
-        try:
-            logger.info("Loading real historical data from 2024 season...")
-            history_2024 = MLBStatsAPILoader.load_historical_season(2024)
-            logger.info(f"Loaded {len(history_2024)} games from 2024")
-
-            logger.info("Loading real historical data from 2023 season...")
-            history_2023 = MLBStatsAPILoader.load_historical_season(2023)
-            logger.info(f"Loaded {len(history_2023)} games from 2023")
-
-            # Combine: historical + current season data (reverse chronological for recency bias)
-            # Recent games get ~3x weight via duplication for better 2026 generalization
-            train_df = pd.concat(
-                [
-                    history_2023,
-                    history_2024,
-                    train_df,
-                    train_df,
-                    train_df,
-                ],  # 3x weight on current season
-                ignore_index=True,
-            )
-            train_df = train_df.sort_values("game_date").reset_index(drop=True)
-            logger.info(
-                f"Training data spans 2023-2026 (recency-weighted): {len(train_df)} games total"
-            )
-        except (ConnectionError, ValueError, KeyError, OSError) as e:
-            logger.warning(
-                "Could not load historical seasons (%s); using current + synthetic fallback",
-                e,
-            )
-        except Exception:
-            logger.exception("Unexpected error loading historical seasons")
-            from mlbv1.data.synthetic_history import enrich_current_data_with_history
-
-            if len(train_df) >= 50:
-                train_df = enrich_current_data_with_history(
-                    train_df, synthetic_years=[2024, 2023]
-                )
-
         if len(train_df) < 50:
             logger.warning(
-                "Insufficient training data (%d games). Using full synthetic fallback.",
+                "Insufficient training data (%d games). Using synthetic fallback.",
                 len(train_df),
             )
             train_df = SyntheticDataLoader(num_games=300).load()
@@ -140,25 +91,6 @@ def main() -> None:
         if weather_key:
             enricher = WeatherEnricher(weather_key)
             train_df = enricher.enrich(train_df)
-
-        # Enrich with authoritative historical data sources (Lahman, Statcast, etc.)
-        logger.info(
-            "Enriching with authoritative historical datasets (Lahman, Statcast)..."
-        )
-        try:
-            train_df = enrich_training_data_with_historical_sources(
-                train_df,
-                include_lahman=True,
-                include_statcast=True,  # Enabled: fetches exit velo, barrel %, xwOBA
-                include_retrosheet=False,
-            )
-        except (ImportError, ConnectionError, ValueError, KeyError, OSError) as e:
-            logger.warning(
-                "Historical data enrichment failed: %s. Continuing with current data.",
-                e,
-            )
-        except Exception:
-            logger.exception("Unexpected error during historical data enrichment")
 
         processed = preprocess(train_df)
         features = engineer_features(
@@ -202,8 +134,6 @@ def main() -> None:
         bankroll = BankrollManager(BankrollConfig())
         recommendations = []
         for pick in consensus_picks:
-            if pick.get("market") != "spread":
-                continue
             rec = bankroll.recommend_bet(
                 game_date=pick["game_date"],
                 home_team=pick["home_team"],
@@ -222,8 +152,7 @@ def main() -> None:
         logger.info("Generated %d actionable picks", len(recommendations))
         for r in recommendations:
             logger.info(
-                "  [%s] %s @ %s | %s %+.1f | Conf: %.1f%% | Edge: %.1f%% | Bet: $%.0f | Models: %d (%.0f%% agree)",
-                r.get("market", "spread"),
+                "  %s @ %s | %s %+.1f | Conf: %.1f%% | Edge: %.1f%% | Bet: $%.0f | Models: %d (%.0f%% agree)",
                 r["away_team"],
                 r["home_team"],
                 r.get("side", "?"),
@@ -261,7 +190,7 @@ def _settle_yesterday(db: TrackingDB, config: AppConfig) -> None:
     logger.info("=== Step 1: Settling yesterday's predictions ===")
 
     try:
-        odds_key = config.data.api_key or os.getenv("ODDS_API_KEY", "")
+        odds_key = os.getenv("ODDS_API_KEY", "")
         if odds_key:
             from mlbv1.data.loader import OddsAPILoader
 
@@ -313,95 +242,76 @@ def _train_and_save(
     db: TrackingDB,
     run_id: str,
 ) -> None:
-    """Train all models across all available markets and save artifacts."""
+    """Train all models and save artifacts."""
 
     train_df, test_df = train_test_split_time(processed.features, 0.8)
     train_X = features.X.loc[train_df.index]
+    train_y = processed.target.loc[train_df.index]
     test_X = features.X.loc[test_df.index]
-    available_markets = {
-        market: target_col
-        for market, target_col in MARKET_TARGET_MAP.items()
-        if processed.targets is not None and target_col in processed.targets.columns
-    }
-    if not available_markets:
-        available_markets = {"spread": "spread_cover"}
+    test_y = processed.target.loc[test_df.index]
 
     trainer = ModelTrainer(output_dir="artifacts/models")
     model_types = ["random_forest", "logistic_regression", "xgboost", "lightgbm"]
 
-    for market, target_col in available_markets.items():
-        train_y = processed.targets.loc[train_df.index, target_col]  # type: ignore[index]
-        test_y = processed.targets.loc[test_df.index, target_col]  # type: ignore[index]
-
-        for model_type in model_types:
-            try:
-                if model_type == "random_forest":
-                    trained = trainer.train_random_forest(
-                        train_X, train_y, config.model.random_forest
-                    )
-                elif model_type == "logistic_regression":
-                    trained = trainer.train_logistic_regression(
-                        train_X, train_y, config.model.logistic_regression
-                    )
-                elif model_type == "xgboost":
-                    trained = trainer.train_xgboost(
-                        train_X, train_y, config.model.xgboost
-                    )
-                elif model_type == "lightgbm":
-                    trained = trainer.train_lightgbm(
-                        train_X, train_y, config.model.lightgbm
-                    )
-                else:
-                    continue
-
-                trained = trained.__class__(
-                    name=f"{trained.name}__{market}",
-                    model=trained.model,
-                    scaler=trained.scaler,
-                    feature_names=trained.feature_names,
+    for model_type in model_types:
+        try:
+            if model_type == "random_forest":
+                trained = trainer.train_random_forest(
+                    train_X, train_y, config.model.random_forest
                 )
-
-                acc = trainer.evaluate(trained, test_X, test_y)
-                if trained.scaler:
-                    scaled_test = pd.DataFrame(
-                        trained.scaler.transform(test_X),
-                        columns=trained.feature_names,
-                        index=test_X.index,
-                    )
-                    preds = trained.model.predict(scaled_test)
-                else:
-                    preds = trained.model.predict(test_X)
-                metrics = evaluate(test_y, preds)
-                trainer.save(trained)
-
-                logger.info(
-                    "%s [%s]: acc=%.3f roi=%.3f sharpe=%.3f",
-                    model_type,
-                    market,
-                    acc,
-                    metrics.roi,
-                    metrics.sharpe_ratio,
+            elif model_type == "logistic_regression":
+                trained = trainer.train_logistic_regression(
+                    train_X, train_y, config.model.logistic_regression
                 )
-                db.log_run(
-                    RunRecord(
-                        run_id=f"{run_id}-{model_type}-{market}",
-                        model_name=model_type,
-                        loader="daily",
-                        target_market=market,
-                        accuracy=acc,
-                        roi=metrics.roi,
-                        sharpe=metrics.sharpe_ratio,
-                        config_json=json.dumps(config.to_dict()),
-                    )
+            elif model_type == "xgboost":
+                trained = trainer.train_xgboost(train_X, train_y, config.model.xgboost)
+            elif model_type == "lightgbm":
+                trained = trainer.train_lightgbm(
+                    train_X, train_y, config.model.lightgbm
                 )
-            except Exception as exc:
-                logger.warning("Failed to train %s for %s: %s", model_type, market, exc)
+            else:
+                continue
+
+            acc = trainer.evaluate(trained, test_X, test_y)
+            if trained.scaler:
+                scaled_test = pd.DataFrame(
+                    trained.scaler.transform(test_X),
+                    columns=trained.feature_names,
+                    index=test_X.index,
+                )
+                preds = trained.model.predict(scaled_test)
+            else:
+                preds = trained.model.predict(test_X)
+            metrics = evaluate(test_y, preds)
+            trainer.save(trained)
+
+            logger.info(
+                "%s: acc=%.3f roi=%.3f sharpe=%.3f",
+                model_type,
+                acc,
+                metrics.roi,
+                metrics.sharpe_ratio,
+            )
+            track_accuracy(model_type, acc)
+            db.log_run(
+                RunRecord(
+                    run_id=f"{run_id}-{model_type}",
+                    model_name=model_type,
+                    loader="daily",
+                    accuracy=acc,
+                    roi=metrics.roi,
+                    sharpe=metrics.sharpe_ratio,
+                    config_json=json.dumps(config.to_dict()),
+                )
+            )
+        except Exception as exc:
+            logger.warning("Failed to train %s: %s", model_type, exc)
 
 
 def _load_todays_games(config: AppConfig) -> pd.DataFrame:
     """Load today's games from odds APIs."""
 
-    odds_key = config.data.api_key or os.getenv("ODDS_API_KEY", "")
+    odds_key = os.getenv("ODDS_API_KEY", "")
     if odds_key:
         try:
             loader = OddsAPILoader(
@@ -449,64 +359,44 @@ def _predict_with_all_models(
         logger.warning("No model directory found — skipping predictions")
         return all_picks
 
-    model_paths = sorted(model_dir.glob("*.pkl"))
-    suffixed_bases = {
-        path.stem.split("__", 1)[0] for path in model_paths if "__" in path.stem
-    }
-
-    for model_path in model_paths:
+    for model_path in model_dir.glob("*.pkl"):
         try:
-            # Skip legacy unsuffixed base model if market-suffixed variants exist.
-            if "__" not in model_path.stem and model_path.stem in suffixed_bases:
-                continue
-
             model = load_model(str(model_path))
-            model_name_raw = str(model.name)
-            if "__" in model_name_raw:
-                base_model_name, market = model_name_raw.split("__", 1)
-            else:
-                base_model_name, market = model_name_raw, "spread"
-
             result = predict(model, features.X)
-            model_prediction_records: list[PredictionRecord] = []
+            track_prediction(model.name, "spread", len(features.X))
 
             for i, idx in enumerate(features.X.index):
                 row = processed.features.loc[idx]
-                line_value = _market_line_for_row(row, market)
                 pick = {
                     "game_date": str(row["game_date"]),
                     "home_team": str(row["home_team"]),
                     "away_team": str(row["away_team"]),
-                    "line": line_value,
-                    "spread": line_value,
-                    "market": market,
+                    "spread": float(row["spread"]),
                     "prediction": int(result.predictions.iloc[i]),
                     "probability": float(result.probabilities.iloc[i]),
-                    "model_name": base_model_name,
-                    "model_key": f"{base_model_name}__{market}",
+                    "model_name": model.name,
                     "home_moneyline": int(row.get("home_moneyline", -110)),
                     "away_moneyline": int(row.get("away_moneyline", -110)),
                 }
                 all_picks.append(pick)
 
-                model_prediction_records.append(
-                    PredictionRecord(
-                        run_id=f"{run_id}-{base_model_name}-{market}",
-                        model_name=base_model_name,
-                        game_date=pick["game_date"],
-                        home_team=pick["home_team"],
-                        away_team=pick["away_team"],
-                        spread=pick["spread"],
-                        prediction=pick["prediction"],
-                        probability=pick["probability"],
-                        home_moneyline=pick["home_moneyline"],
-                        away_moneyline=pick["away_moneyline"],
-                        market=market,
-                    )
+                # Log to tracking DB
+                db.log_predictions(
+                    [
+                        PredictionRecord(
+                            run_id=f"{run_id}-{model.name}",
+                            model_name=model.name,
+                            game_date=pick["game_date"],
+                            home_team=pick["home_team"],
+                            away_team=pick["away_team"],
+                            spread=pick["spread"],
+                            prediction=pick["prediction"],
+                            probability=pick["probability"],
+                            home_moneyline=pick["home_moneyline"],
+                            away_moneyline=pick["away_moneyline"],
+                        )
+                    ]
                 )
-
-            # Log model predictions in one batch
-            db.log_predictions(model_prediction_records)
         except Exception as exc:
             logger.warning("Model %s failed: %s", model_path.name, exc)
 
@@ -528,8 +418,6 @@ def _build_model_weights(
 
     for age, run in enumerate(runs):
         model = str(run.get("model_name", "")).strip()
-        market = str(run.get("target_market", "spread")).strip() or "spread"
-        model_key = f"{model}__{market}"
         accuracy_raw = run.get("accuracy")
         if not model or accuracy_raw is None:
             continue
@@ -539,12 +427,10 @@ def _build_model_weights(
             continue
         if 0.0 <= accuracy <= 1.0:
             recency_weight = decay**age
-            weighted_sums[model_key] = weighted_sums.get(model_key, 0.0) + (
+            weighted_sums[model] = weighted_sums.get(model, 0.0) + (
                 accuracy * recency_weight
             )
-            weight_totals[model_key] = (
-                weight_totals.get(model_key, 0.0) + recency_weight
-            )
+            weight_totals[model] = weight_totals.get(model, 0.0) + recency_weight
 
     weights: dict[str, float] = {}
     for model_name, total in weighted_sums.items():
@@ -576,18 +462,12 @@ def _build_consensus_picks(
 
     frame = pd.DataFrame(all_picks)
     weights = model_weights or {}
-    frame["model_weight"] = (
-        frame.get("model_key", frame["model_name"])
-        .map(weights)
-        .fillna(1.0)
-        .astype(float)
-    )
+    frame["model_weight"] = frame["model_name"].map(weights).fillna(1.0).astype(float)
     keys = [
         "game_date",
         "home_team",
         "away_team",
-        "market",
-        "line",
+        "spread",
         "home_moneyline",
         "away_moneyline",
     ]
@@ -610,15 +490,13 @@ def _build_consensus_picks(
         agreement = max(weighted_home_pick, 1.0 - weighted_home_pick)
         model_names = sorted({str(name) for name in group["model_name"].tolist()})
 
-        game_date, home_team, away_team, market, line, home_ml, away_ml = game_key
+        game_date, home_team, away_team, spread, home_ml, away_ml = game_key
         consensus.append(
             {
                 "game_date": str(game_date),
                 "home_team": str(home_team),
                 "away_team": str(away_team),
-                "market": str(market),
-                "line": float(line),
-                "spread": float(line),
+                "spread": float(spread),
                 "prediction": consensus_prediction,
                 "probability": weighted_home_prob,
                 "home_moneyline": int(home_ml),
@@ -633,23 +511,6 @@ def _build_consensus_picks(
 
     consensus.sort(key=lambda p: abs(float(p["probability"]) - 0.5), reverse=True)
     return consensus
-
-
-def _market_line_for_row(row: pd.Series, market: str) -> float:
-    """Get the relevant line for a market; reuses `spread` DB field for storage."""
-    if market == "spread":
-        return float(row.get("spread", 0.0))
-    if market == "moneyline":
-        return 0.0
-    if market == "total":
-        return float(row.get("total_runs", 0.0))
-    if market == "f5_spread":
-        return float(row.get("f5_spread", 0.0))
-    if market == "f5_moneyline":
-        return 0.0
-    if market == "f5_total":
-        return float(row.get("f5_total_runs", 0.0))
-    return float(row.get("spread", 0.0))
 
 
 if __name__ == "__main__":

@@ -129,6 +129,22 @@ class TestTrackingDB:
         comparison = self.db.get_model_comparison()
         assert len(comparison) == 2
 
+    def test_pipeline_status_lifecycle(self) -> None:
+        initial = self.db.get_pipeline_status()
+        assert initial["last_run_status"] == "never_run"
+
+        assert self.db.try_start_pipeline() is True
+        running = self.db.get_pipeline_status()
+        assert running["last_run_status"] == "running"
+
+        # Second start attempt while running should fail.
+        assert self.db.try_start_pipeline() is False
+
+        self.db.finish_pipeline_run("success")
+        done = self.db.get_pipeline_status()
+        assert done["last_run_status"] == "success"
+        assert done["last_run"] is not None
+
 
 class TestBankrollManager:
     """Tests for Kelly criterion bankroll management."""

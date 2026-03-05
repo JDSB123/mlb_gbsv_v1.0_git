@@ -36,6 +36,7 @@ Thumbs.db
 # Secrets
 .env
 .env.*
+.trigger_api_key.txt
 
 # Data/Artifacts
 artifacts/

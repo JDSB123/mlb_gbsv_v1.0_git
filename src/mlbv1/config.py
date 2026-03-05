@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from mlbv1.azure_secrets import get_secret
+
 
 def _load_dotenv(dotenv_path: str | None = None) -> None:
     """Read a .env file and inject into os.environ (no dependency needed)."""
@@ -124,11 +126,13 @@ class AlertConfig:
     @classmethod
     def from_env(cls) -> AlertConfig:
         return cls(
-            discord_webhook_url=os.getenv("DISCORD_WEBHOOK_URL", ""),
+            discord_webhook_url=get_secret(
+                "discord-webhook-url", "DISCORD_WEBHOOK_URL"
+            ),
             smtp_host=os.getenv("SMTP_HOST", ""),
             smtp_port=int(os.getenv("SMTP_PORT", "587")),
             smtp_user=os.getenv("SMTP_USER", ""),
-            smtp_password=os.getenv("SMTP_PASSWORD", ""),
+            smtp_password=get_secret("smtp-password", "SMTP_PASSWORD"),
             smtp_from=os.getenv("SMTP_FROM", ""),
             smtp_to=os.getenv("SMTP_TO", ""),
         )
@@ -238,10 +242,12 @@ class AppConfig:
             loader = payload["data"].get("loader")
             if loader:
                 if "api_key" not in data:
-                    payload["data"]["api_key"] = os.getenv("MLB_API_KEY") or os.getenv(
-                        _LOADER_API_KEY_MAP.get(loader, ""),
-                        "",
-                    )
+                    # Try Key Vault first, fall back to env vars
+                    env_key = _LOADER_API_KEY_MAP.get(loader, "")
+                    api_key = get_secret(
+                        env_key.lower().replace("_", "-"), env_key
+                    ) or os.getenv("MLB_API_KEY", "")
+                    payload["data"]["api_key"] = api_key
                 if "api_base_url" not in data:
                     payload["data"]["api_base_url"] = os.getenv(
                         "MLB_API_BASE_URL",
@@ -262,9 +268,10 @@ class AppConfig:
             return cls._from_dict(payload)
 
         loader = os.getenv("MLB_LOADER", "synthetic")
-        # Resolve the correct API key for the selected loader.
-        api_key = os.getenv("MLB_API_KEY") or os.getenv(
-            _LOADER_API_KEY_MAP.get(loader, ""), ""
+        # Resolve the correct API key for the selected loader using Key Vault or env vars.
+        env_key = _LOADER_API_KEY_MAP.get(loader, "")
+        api_key = get_secret(env_key.lower().replace("_", "-"), env_key) or os.getenv(
+            "MLB_API_KEY", ""
         )
         api_base_url = os.getenv("MLB_API_BASE_URL") or _LOADER_BASE_URL_MAP.get(
             loader, ""

@@ -11,26 +11,33 @@ requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "JDSB" }]
 dependencies = [
-  "numpy>=1.26.0",
-  "pandas>=2.1.0",
-  "scikit-learn>=1.4.0",
-  "xgboost>=2.0.0",
-  "lightgbm>=4.0.0",
+  "numpy==1.26.4",
+  "pandas==2.1.4",
+  "scikit-learn==1.4.2",
+  "xgboost==2.0.3",
+  "lightgbm==4.3.0",
+  "joblib==1.4.2",
+  "requests==2.31.0",
+  "flask==3.0.3",
+  "gunicorn==22.0.0",
+  "azure-identity==1.16.0",
+  "azure-keyvault-secrets==4.8.0",
+  "azure-storage-blob==12.20.0",
+  "azure-monitor-opentelemetry==1.5.0",
+  "opentelemetry-api==1.24.0",
+  "opentelemetry-sdk==1.24.0",
 ]
 
 [project.optional-dependencies]
 dashboard = [
-  "streamlit>=1.30.0",
-  "plotly>=5.18.0",
+  "streamlit==1.35.0",
+  "plotly==5.22.0",
 ]
 dev = [
-  "pytest>=8.0.0",
-  "ruff>=0.4.0",
-  "mypy>=1.8.0",
-  "pandas-stubs>=2.1.0",
-]
-enrichment = [
-  "pybaseball>=2.2.0",
+  "pytest==8.2.1",
+  "ruff==0.4.10",
+  "mypy==1.10.0",
+  "pandas-stubs==2.1.4.231227",
 ]
 all = [
   "streamlit>=1.30.0",
@@ -39,7 +46,6 @@ all = [
   "ruff>=0.4.0",
   "mypy>=1.8.0",
   "pandas-stubs>=2.1.0",
-  "pybaseball>=2.2.0",
 ]
 
 [project.scripts]

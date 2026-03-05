@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
-import pickle
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+import joblib
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
@@ -255,8 +255,7 @@ class ModelTrainer:
 
     def save(self, model: TrainedModel) -> Path:
         path = self.output_dir / f"{model.name}.pkl"
-        with open(path, "wb") as handle:
-            pickle.dump(model, handle)
+        joblib.dump(model, path)
         return path
 
     def train_all(
