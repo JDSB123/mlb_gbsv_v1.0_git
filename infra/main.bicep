@@ -1,6 +1,7 @@
 param location string = 'eastus'
 param namePrefix string = 'mlb-gbsv-v1-az'
 param servicePrincipalObjectId string = ''
+param enableRoleAssignments bool = false
 param sqlAdminLogin string = 'mlbadmin'
 @secure()
 param sqlAdminPassword string = newGuid()
@@ -58,7 +59,7 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   }
 }
 
-resource kvRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (servicePrincipalObjectId != '') {
+resource kvRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (enableRoleAssignments && servicePrincipalObjectId != '') {
   name: guid(keyVault.id, servicePrincipalObjectId, kvSecretsUserRoleId)
   scope: keyVault
   properties: {
@@ -260,7 +261,7 @@ resource acaApp 'Microsoft.App/containerApps@2023-05-01' = {
 }
 
 // Grant Container App managed identity access to Key Vault
-resource acaKvRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource acaKvRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (enableRoleAssignments) {
   name: guid(keyVault.id, acaApp.name, kvSecretsUserRoleId)
   scope: keyVault
   properties: {

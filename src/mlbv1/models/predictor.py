@@ -26,7 +26,7 @@ def load_model(path: str) -> TrainedModel | EnsembleModel:
     if not model_path.exists():
         raise FileNotFoundError(f"Model not found: {model_path}")
     model = joblib.load(model_path)
-    if not isinstance(model, (TrainedModel, EnsembleModel)):
+    if not isinstance(model, TrainedModel | EnsembleModel):
         raise TypeError("Invalid model file")
     return model
 
