@@ -36,11 +36,11 @@ class TestEndToEndPipeline:
 
         # Predict
         result = predict(trained, features.X)
-        assert len(result.predictions) == len(processed.target)
+        assert len(result.expected_runs) == len(processed.target)
 
         # Evaluate
-        metrics = evaluate(processed.target, result.predictions)
-        assert 0.0 <= metrics.accuracy <= 1.0
+        metrics = evaluate(processed.target, result.expected_runs)
+        assert metrics.accuracy <= 0.0
 
     def test_full_pipeline_lr(self, tmp_path: Path) -> None:
         """Logistic regression end-to-end."""
@@ -55,8 +55,8 @@ class TestEndToEndPipeline:
             features.X, processed.target, config.model.logistic_regression
         )
         result = predict(trained, features.X)
-        metrics = evaluate(processed.target, result.predictions)
-        assert 0.0 <= metrics.accuracy <= 1.0
+        metrics = evaluate(processed.target, result.expected_runs)
+        assert metrics.accuracy <= 0.0
 
     def test_pipeline_with_tracking(self, tmp_path: Path) -> None:
         """Pipeline with DB tracking."""
@@ -74,7 +74,7 @@ class TestEndToEndPipeline:
         # Log run
         run_id = "test-integration-001"
         result = predict(trained, features.X)
-        metrics = evaluate(processed.target, result.predictions)
+        metrics = evaluate(processed.target, result.expected_runs)
         db.log_run(
             RunRecord(
                 run_id=run_id,
@@ -94,8 +94,8 @@ class TestEndToEndPipeline:
                     game_date="2024-07-01",
                     home_team=f"Team{idx}",
                     away_team=f"Opponent{idx}",
-                    prediction=int(result.predictions.iloc[idx]),
-                    probability=float(result.probabilities.iloc[idx]),
+                    prediction=1,
+                    probability=0.5,
                     spread=-1.5,
                 )
             )

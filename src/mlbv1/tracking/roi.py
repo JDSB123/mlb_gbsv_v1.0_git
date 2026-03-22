@@ -90,6 +90,15 @@ class BankrollManager:
         implied_prob = self._implied_probability(home_moneyline)
         edge = probability - implied_prob
 
+        # Anomaly Detection: Edge sanity check
+        if abs(edge) > 0.15:
+            logger.warning(
+                "Anomaly Detected: Extremely high edge (%.1f%%) for %s vs %s. "
+                "This may indicate a data error or stale odds. Ignoring heavily mispriced line.",
+                edge * 100, home_team, away_team
+            )
+            return None
+
         if probability >= self.config.min_confidence and edge >= self.config.min_edge:
             side = "home"
             odds = home_moneyline

@@ -15,4 +15,5 @@ def test_preprocess_target() -> None:
     loader = SyntheticDataLoader(num_games=10)
     df = loader.load()
     processed = preprocess(df)
-    assert processed.target.isin([0, 1]).all()
+    assert not processed.target.empty
+    assert processed.target.shape[1] == 6

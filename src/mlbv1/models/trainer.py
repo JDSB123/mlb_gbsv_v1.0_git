@@ -1,4 +1,4 @@
-"""Model training for MLB spread predictions."""
+"""Model training for MLB Regression Multi-Market predictions."""
 
 from __future__ import annotations
 
@@ -9,11 +9,11 @@ from typing import Any, Protocol
 
 import joblib
 import pandas as pd
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score
-from sklearn.model_selection import GridSearchCV
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.linear_model import Ridge
+from sklearn.metrics import mean_squared_error, mean_absolute_error
 from sklearn.preprocessing import StandardScaler
+from sklearn.multioutput import MultiOutputRegressor
 
 from mlbv1.config import (
     LightGBMConfig,
@@ -25,272 +25,167 @@ from mlbv1.config import (
 
 logger = logging.getLogger(__name__)
 
-
-class ClassifierLike(Protocol):
-    """Protocol for classifiers supporting probability predictions."""
-
-    def predict(self, X: Any) -> Any:  # noqa: ANN401 - sklearn compatibility
+class RegressorLike(Protocol):
+    """Protocol for regressors."""
+    def predict(self, X: Any) -> Any:
         ...
-
-    def predict_proba(self, X: Any) -> Any:  # noqa: ANN401 - sklearn compatibility
-        ...
-
 
 @dataclass(frozen=True)
 class TrainedModel:
     """Container for trained model artifacts."""
-
     name: str
-    model: ClassifierLike
+    model: RegressorLike
     scaler: StandardScaler | None
     feature_names: list[str]
-
+    target_names: list[str]
 
 class ModelTrainer:
-    """Train scikit-learn / xgboost / lightgbm models for MLB predictions."""
+    """Train scikit-learn / xgboost / lightgbm multi-target regressors."""
 
     def __init__(self, output_dir: str = "artifacts/models") -> None:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.target_names = ["f5_home_score", "f5_away_score", "home_score", "away_score"]
+
+    def _prepare_targets(self, y: pd.DataFrame) -> pd.DataFrame:
+        """Ensure targets exist and are aligned."""
+        missing = [col for col in self.target_names if col not in y.columns]
+        if missing:
+            raise ValueError(f"Missing target columns: {missing}")
+        return y[self.target_names].fillna(0)
 
     # ------------------------------------------------------------------
-    # Random Forest
+    # Random Forest Regression
     # ------------------------------------------------------------------
-
     def train_random_forest(
-        self, X: pd.DataFrame, y: pd.Series, config: RandomForestConfig
+        self, X: pd.DataFrame, y: pd.DataFrame, config: RandomForestConfig
     ) -> TrainedModel:
-        model = RandomForestClassifier(
+        y_multi = self._prepare_targets(y)
+        base_model = RandomForestRegressor(
             n_estimators=config.n_estimators,
             max_depth=config.max_depth,
             min_samples_split=config.min_samples_split,
             min_samples_leaf=config.min_samples_leaf,
-            class_weight="balanced",
             random_state=config.random_state,
         )
-        model.fit(X, y)
+        model = MultiOutputRegressor(base_model)
+        model.fit(X, y_multi)
         return TrainedModel(
             name="random_forest",
             model=model,
             scaler=None,
             feature_names=list(X.columns),
+            target_names=self.target_names,
         )
 
     # ------------------------------------------------------------------
-    # Logistic Regression
+    # Ridge Regression (Replacing Logistic)
     # ------------------------------------------------------------------
-
     def train_logistic_regression(
-        self, X: pd.DataFrame, y: pd.Series, config: LogisticRegressionConfig
+        self, X: pd.DataFrame, y: pd.DataFrame, config: LogisticRegressionConfig
     ) -> TrainedModel:
+        # We rename the method technically, but keep the name backwards compatible so train.py doesnt break
+        y_multi = self._prepare_targets(y)
         scaler = StandardScaler()
         X_scaled = pd.DataFrame(
             scaler.fit_transform(X), columns=X.columns, index=X.index
         )
-        model = LogisticRegression(
-            C=config.C,
+        # Using Ridge instead of Logistic Regression for continuous target
+        base_model = Ridge(
+            alpha=1.0 / (config.C + 1e-6),  # C is inverse of regularization strength
             max_iter=config.max_iter,
-            class_weight="balanced",
             random_state=config.random_state,
         )
-        model.fit(X_scaled, y)
+        model = MultiOutputRegressor(base_model)
+        model.fit(X_scaled, y_multi)
         return TrainedModel(
-            name="logistic_regression",
+            name="logistic_regression", # Keep legacy name
             model=model,
             scaler=scaler,
             feature_names=list(X.columns),
+            target_names=self.target_names,
         )
 
     # ------------------------------------------------------------------
     # XGBoost
     # ------------------------------------------------------------------
-
     def train_xgboost(
-        self, X: pd.DataFrame, y: pd.Series, config: XGBoostConfig
+        self, X: pd.DataFrame, y: pd.DataFrame, config: XGBoostConfig
     ) -> TrainedModel:
-        from sklearn.utils.class_weight import compute_sample_weight
-        from xgboost import XGBClassifier  # lazy import
+        import xgboost as xgb
 
-        sample_weights = compute_sample_weight("balanced", y)
-
-        model = XGBClassifier(
+        y_multi = self._prepare_targets(y)
+        base_model = xgb.XGBRegressor(
             n_estimators=config.n_estimators,
             max_depth=config.max_depth,
             learning_rate=config.learning_rate,
             subsample=config.subsample,
             colsample_bytree=config.colsample_bytree,
-            min_child_weight=config.min_child_weight,
-            gamma=config.gamma,
-            reg_alpha=config.reg_alpha,
-            reg_lambda=config.reg_lambda,
             random_state=config.random_state,
-            eval_metric=config.eval_metric,
+            objective="reg:squarederror", # appropriate for counts
         )
-        model.fit(X, y, sample_weight=sample_weights)
+        model = MultiOutputRegressor(base_model)
+        model.fit(X, y_multi)
         return TrainedModel(
             name="xgboost",
             model=model,
             scaler=None,
             feature_names=list(X.columns),
+            target_names=self.target_names,
         )
 
     # ------------------------------------------------------------------
     # LightGBM
     # ------------------------------------------------------------------
-
     def train_lightgbm(
-        self, X: pd.DataFrame, y: pd.Series, config: LightGBMConfig
+        self, X: pd.DataFrame, y: pd.DataFrame, config: LightGBMConfig
     ) -> TrainedModel:
-        from lightgbm import LGBMClassifier  # lazy import
+        import lightgbm as lgb
 
-        model = LGBMClassifier(
+        y_multi = self._prepare_targets(y)
+        base_model = lgb.LGBMRegressor(
             n_estimators=config.n_estimators,
             max_depth=config.max_depth,
             learning_rate=config.learning_rate,
             subsample=config.subsample,
             colsample_bytree=config.colsample_bytree,
-            min_child_samples=config.min_child_samples,
-            reg_alpha=config.reg_alpha,
-            reg_lambda=config.reg_lambda,
-            num_leaves=config.num_leaves,
-            is_unbalance=True,
             random_state=config.random_state,
-            verbose=config.verbose,
+            objective="regression",
         )
-        model.fit(X, y)
+        model = MultiOutputRegressor(base_model)
+        model.fit(X, y_multi)
         return TrainedModel(
             name="lightgbm",
             model=model,
             scaler=None,
             feature_names=list(X.columns),
+            target_names=self.target_names,
         )
 
-    # ------------------------------------------------------------------
-    # Hyperparameter Tuning (GridSearchCV)
-    # ------------------------------------------------------------------
-
-    def tune_hyperparameters(
-        self,
-        X: pd.DataFrame,
-        y: pd.Series,
-        model_name: str,
-        tuning: TuningConfig,
-    ) -> TrainedModel:
-        """Run GridSearchCV for *model_name* and return the best estimator."""
-        scaler: StandardScaler | None = None
-        X_fit: Any = X
-
-        if model_name == "random_forest":
-            estimator = RandomForestClassifier(random_state=42)
-            param_grid: dict[str, list[Any]] = {
-                "n_estimators": [100, 300, 500],
-                "max_depth": [4, 8, None],
-                "min_samples_split": [2, 5],
-            }
-        elif model_name == "logistic_regression":
-            estimator = LogisticRegression(max_iter=2000, random_state=42)
-            param_grid = {"C": [0.01, 0.1, 1.0, 10.0]}
-            scaler = StandardScaler()
-            X_fit = scaler.fit_transform(X)
-        elif model_name == "xgboost":
-            from xgboost import XGBClassifier
-
-            estimator = XGBClassifier(
-                use_label_encoder=False, eval_metric="logloss", random_state=42
+    def evaluate(
+        self, trained: TrainedModel, X: pd.DataFrame, y: pd.DataFrame
+    ) -> float:
+        """Evaluate model returning negative MSE as 'accuracy' for compatibility, or an R2 score."""
+        y_multi = self._prepare_targets(y)
+        if trained.scaler:
+            X_test = pd.DataFrame(
+                trained.scaler.transform(X),
+                columns=trained.feature_names,
+                index=X.index,
             )
-            param_grid = {
-                "n_estimators": [100, 300],
-                "max_depth": [4, 6, 8],
-                "learning_rate": [0.05, 0.1],
-                "subsample": [0.8, 1.0],
-            }
-        elif model_name == "lightgbm":
-            from lightgbm import LGBMClassifier
-
-            estimator = LGBMClassifier(verbose=-1, random_state=42)
-            param_grid = {
-                "n_estimators": [100, 300],
-                "max_depth": [4, 6, 8],
-                "learning_rate": [0.05, 0.1],
-                "num_leaves": [15, 31, 63],
-            }
+            preds = trained.model.predict(X_test)
         else:
-            raise ValueError(f"Unknown model for tuning: {model_name}")
+            preds = trained.model.predict(X)
 
-        gs = GridSearchCV(
-            estimator,
-            param_grid,
-            cv=tuning.cv_folds,
-            scoring=tuning.scoring,
-            n_jobs=tuning.n_jobs,
-            verbose=0,
-        )
-        gs.fit(X_fit, y)
-        logger.info(
-            "Best %s params: %s  score=%.4f",
-            model_name,
-            gs.best_params_,
-            gs.best_score_,
-        )
-        return TrainedModel(
-            name=model_name,
-            model=gs.best_estimator_,
-            scaler=scaler,
-            feature_names=list(X.columns),
-        )
+        mse = mean_squared_error(y_multi, preds)
+        
+        logger.info("%s evaluation MSE: %.3f", trained.name, mse)
+        # To maintain compatibility with scripts expecting higher-is-better metrics (like 'accuracy')
+        # we return pseudo accuracy. Negative MSE keeps higher values (closer to 0) better.
+        return -float(mse)
 
-    # ------------------------------------------------------------------
-    # Evaluate / Save / Train-all
-    # ------------------------------------------------------------------
-
-    def evaluate(self, model: TrainedModel, X: pd.DataFrame, y: pd.Series) -> float:
-        if model.scaler:
-            scaled = pd.DataFrame(
-                model.scaler.transform(X), columns=model.feature_names, index=X.index
-            )
-            preds = model.model.predict(scaled)
-        else:
-            preds = model.model.predict(X)
-        return float(accuracy_score(y, preds))
-
-    def save(self, model: TrainedModel) -> Path:
-        path = self.output_dir / f"{model.name}.pkl"
-        joblib.dump(model, path)
-        return path
-
-    def train_all(
-        self,
-        X: pd.DataFrame,
-        y: pd.Series,
-        rf_config: RandomForestConfig,
-        lr_config: LogisticRegressionConfig,
-        xgb_config: XGBoostConfig | None = None,
-        lgbm_config: LightGBMConfig | None = None,
-        tuning: TuningConfig | None = None,
-    ) -> dict[str, TrainedModel]:
-        """Train all configured model types, optionally with grid search."""
-        models: dict[str, TrainedModel] = {}
-
-        if tuning and tuning.enabled:
-            for name in ("random_forest", "logistic_regression", "xgboost", "lightgbm"):
-                try:
-                    models[name] = self.tune_hyperparameters(X, y, name, tuning)
-                except Exception as exc:
-                    logger.warning("Tuning %s failed: %s", name, exc)
-        else:
-            models["random_forest"] = self.train_random_forest(X, y, rf_config)
-            models["logistic_regression"] = self.train_logistic_regression(
-                X, y, lr_config
-            )
-            if xgb_config:
-                try:
-                    models["xgboost"] = self.train_xgboost(X, y, xgb_config)
-                except ImportError:
-                    logger.warning("xgboost not installed — skipping")
-            if lgbm_config:
-                try:
-                    models["lightgbm"] = self.train_lightgbm(X, y, lgbm_config)
-                except ImportError:
-                    logger.warning("lightgbm not installed — skipping")
-
-        return models
+    def save(self, trained: TrainedModel) -> None:
+        """Save trained model to disk."""
+        path = self.output_dir / f"{trained.name}.pkl"
+        joblib.dump(trained, path)
+        logger.info("Saved model to %s", path)

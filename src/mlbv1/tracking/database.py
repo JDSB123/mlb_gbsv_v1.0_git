@@ -15,72 +15,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from alembic import command
+from alembic.config import Config
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_DB_PATH = "artifacts/tracking.db"
-
-_SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS predictions (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    run_id      TEXT    NOT NULL,
-    model_name  TEXT    NOT NULL,
-    market      TEXT    NOT NULL DEFAULT 'spread',
-    game_date   TEXT    NOT NULL,
-    home_team   TEXT    NOT NULL,
-    away_team   TEXT    NOT NULL,
-    spread      REAL    NOT NULL DEFAULT 0.0,
-    prediction  INTEGER NOT NULL,
-    probability REAL    NOT NULL DEFAULT 0.5,
-    home_moneyline INTEGER DEFAULT -110,
-    away_moneyline INTEGER DEFAULT -110,
-    created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
-    -- outcome fields (filled after game)
-    actual_home_score INTEGER,
-    actual_away_score INTEGER,
-    actual_result     INTEGER,  -- 1 = win/cover, 0 = loss
-    settled           INTEGER NOT NULL DEFAULT 0,
-    settled_at        TEXT
-);
-
-CREATE INDEX IF NOT EXISTS idx_pred_run ON predictions(run_id);
-CREATE INDEX IF NOT EXISTS idx_pred_game ON predictions(game_date, home_team, market);
-CREATE INDEX IF NOT EXISTS idx_pred_settled ON predictions(settled);
-
-CREATE TABLE IF NOT EXISTS runs (
-    run_id        TEXT PRIMARY KEY,
-    model_name    TEXT NOT NULL,
-    target_market TEXT NOT NULL DEFAULT 'spread',
-    loader        TEXT NOT NULL DEFAULT 'synthetic',
-    accuracy      REAL,
-    roi           REAL,
-    sharpe        REAL,
-    config_json   TEXT,
-    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS bankroll (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    run_id     TEXT    NOT NULL,
-    game_date  TEXT    NOT NULL,
-    bet_amount REAL    NOT NULL DEFAULT 100.0,
-    payout     REAL    NOT NULL DEFAULT 0.0,
-    balance    REAL    NOT NULL DEFAULT 0.0,
-    created_at TEXT    NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_bankroll_date ON bankroll(game_date);
-
-CREATE TABLE IF NOT EXISTS pipeline_status (
-    id               INTEGER PRIMARY KEY CHECK (id = 1),
-    last_run         TEXT,
-    last_run_status  TEXT NOT NULL DEFAULT 'never_run',
-    updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-INSERT OR IGNORE INTO pipeline_status (id, last_run, last_run_status)
-VALUES (1, NULL, 'never_run');
-"""
-
 
 @dataclass
 class PredictionRecord:
@@ -136,41 +76,15 @@ class TrackingDB:
             conn.close()
 
     def _init_schema(self) -> None:
-        with self._connect() as conn:
-            conn.executescript(_SCHEMA_SQL)
-            self._apply_migrations(conn)
-        logger.info("Tracking DB initialized at %s", self.db_path)
-
-    @staticmethod
-    def _apply_migrations(conn: sqlite3.Connection) -> None:
-        """Apply additive schema migrations for existing DB files."""
-
-        def _has_column(table: str, column: str) -> bool:
-            rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
-            return any(r[1] == column for r in rows)
-
-        if not _has_column("predictions", "market"):
-            conn.execute(
-                "ALTER TABLE predictions ADD COLUMN market TEXT DEFAULT 'spread'"
-            )
-
-        if not _has_column("runs", "target_market"):
-            conn.execute(
-                "ALTER TABLE runs ADD COLUMN target_market TEXT DEFAULT 'spread'"
-            )
-
-        conn.execute(
-            """CREATE TABLE IF NOT EXISTS pipeline_status (
-                   id               INTEGER PRIMARY KEY CHECK (id = 1),
-                   last_run         TEXT,
-                   last_run_status  TEXT NOT NULL DEFAULT 'never_run',
-                   updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
-               )"""
-        )
-        conn.execute(
-            """INSERT OR IGNORE INTO pipeline_status (id, last_run, last_run_status)
-               VALUES (1, NULL, 'never_run')"""
-        )
+        alembic_ini_path = Path(__file__).resolve().parents[3] / "alembic.ini"
+        if not alembic_ini_path.exists():
+            logger.warning("alembic.ini not found at %s. Skipping auto-migration.", alembic_ini_path)
+            return
+            
+        alembic_cfg = Config(str(alembic_ini_path))
+        alembic_cfg.set_main_option("sqlalchemy.url", f"sqlite:///{self.db_path.absolute()}")
+        command.upgrade(alembic_cfg, "head")
+        logger.info("Tracking DB auto-migrated at %s", self.db_path)
 
     # -- writes ---------------------------------------------------------------
 

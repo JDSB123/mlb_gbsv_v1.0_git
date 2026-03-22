@@ -15,11 +15,12 @@ RUN useradd -m -u 1000 mlbuser && \
   chown -R mlbuser:mlbuser /app
 
 # Copy dependency files
-COPY --chown=mlbuser:mlbuser pyproject.toml README.md /app/
+COPY --chown=mlbuser:mlbuser pyproject.toml README.md requirements-lock.txt /app/
 
 # Install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip \
-  && pip install --no-cache-dir ".[all]"
+  && pip install --no-cache-dir -r requirements-lock.txt \
+  && pip install --no-deps -e .
 
 # Copy application code
 COPY --chown=mlbuser:mlbuser src /app/src

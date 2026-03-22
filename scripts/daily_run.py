@@ -351,15 +351,27 @@ def _predict_with_all_models(
 ) -> list[dict[str, Any]]:
     """Load all saved models and generate predictions."""
     from pathlib import Path
+    from mlbv1.models.registry import ModelRegistry
 
-    model_dir = Path("artifacts/models")
     all_picks: list[dict[str, Any]] = []
 
-    if not model_dir.exists():
-        logger.warning("No model directory found — skipping predictions")
-        return all_picks
+    try:
+        registry = ModelRegistry()
+        active_models = registry.get_all_production_models()
+        model_paths = [Path(m.file_path) for m in active_models]
+    except Exception as exc:
+        logger.warning("Failed to query ModelRegistry: %s", exc)
+        model_paths = []
 
-    for model_path in model_dir.glob("*.pkl"):
+    # Fallback to loose files if none
+    if not model_paths:
+        model_dir = Path("artifacts/models")
+        if not model_dir.exists():
+            logger.warning("No model directory found — skipping predictions")
+            return all_picks
+        model_paths = list(model_dir.glob("*.pkl"))
+
+    for model_path in model_paths:
         try:
             model = load_model(str(model_path))
             result = predict(model, features.X)
@@ -372,8 +384,8 @@ def _predict_with_all_models(
                     "home_team": str(row["home_team"]),
                     "away_team": str(row["away_team"]),
                     "spread": float(row["spread"]),
-                    "prediction": int(result.predictions.iloc[i]),
-                    "probability": float(result.probabilities.iloc[i]),
+                    "prediction": 1 if float(result.market_probabilities["spread_home_prob"].iloc[i]) > 0.5 else 0,
+                    "probability": float(result.market_probabilities["spread_home_prob"].iloc[i]),
                     "model_name": model.name,
                     "home_moneyline": int(row.get("home_moneyline", -110)),
                     "away_moneyline": int(row.get("away_moneyline", -110)),
@@ -425,7 +437,7 @@ def _build_model_weights(
             accuracy = float(accuracy_raw)
         except (TypeError, ValueError):
             continue
-        if 0.0 <= accuracy <= 1.0:
+        if True: # accuracy can be negative MSE now
             recency_weight = decay**age
             weighted_sums[model] = weighted_sums.get(model, 0.0) + (
                 accuracy * recency_weight

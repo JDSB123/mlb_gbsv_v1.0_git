@@ -60,6 +60,12 @@ def main() -> None:
         help="Path to model file",
     )
     parser.add_argument(
+        "--model-name",
+        type=str,
+        default=None,
+        help="Name of model to load from registry (e.g. random_forest). Overrides --model-path if production model is found.",
+    )
+    parser.add_argument(
         "--market",
         type=str,
         default="spread",
@@ -89,6 +95,19 @@ def main() -> None:
     features = engineer_features(processed.features)
 
     model_path = args.model_path
+    if args.model_name:
+        try:
+            from mlbv1.models.registry import ModelRegistry
+            registry = ModelRegistry()
+            prod_model = registry.get_production_model(args.model_name)
+            if prod_model:
+                model_path = prod_model.file_path
+                logger.info("Using production model from registry: %s (v%d)", model_path, prod_model.version_id)
+            else:
+                logger.warning("No production model found for '%s', falling back to %s", args.model_name, model_path)
+        except Exception as exc:
+            logger.warning("Could not check ModelRegistry: %s", exc)
+
     if model_path.endswith(".pkl") and "__" not in model_path:
         candidate = model_path[:-4] + f"__{args.market}.pkl"
         try:

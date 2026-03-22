@@ -14,7 +14,7 @@ def test_train_random_forest() -> None:
     trainer = ModelTrainer(output_dir="artifacts/test_models")
     model = trainer.train_random_forest(features.X, processed.target, trainer_config())
     acc = trainer.evaluate(model, features.X, processed.target)
-    assert 0.0 <= acc <= 1.0
+    assert acc <= 0
 
 
 def trainer_config() -> RandomForestConfig:

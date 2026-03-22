@@ -12,8 +12,7 @@ class TestPreprocessor:
     def test_target_binary(self) -> None:
         df = SyntheticDataLoader(num_games=50, seed=42).load()
         processed = preprocess(df)
-        unique = processed.target.unique()
-        assert set(unique).issubset({0, 1})
+        assert processed.target.shape[1] == 6
 
     def test_preserves_row_count(self) -> None:
         df = SyntheticDataLoader(num_games=50, seed=42).load()

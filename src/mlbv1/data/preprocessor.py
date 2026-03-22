@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Tuple
 
 import pandas as pd
 
@@ -91,11 +90,15 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_targets(df: pd.DataFrame) -> pd.DataFrame:
-    """Create binary targets for all markets."""
+    """Create targets for all markets."""
     targets = pd.DataFrame(index=df.index)
 
-    # 1. Full Game Spread (Home Cover)
-    margin = df["home_score"] - df["away_score"]
+    # Base targets for regression
+    targets["home_score"] = pd.to_numeric(df["home_score"], errors="coerce").fillna(0)
+    targets["away_score"] = pd.to_numeric(df["away_score"], errors="coerce").fillna(0)
+
+    # Legacy Binary Targets
+    margin = targets["home_score"] - targets["away_score"]
     targets["spread_cover"] = (margin + df["spread"] > 0).astype(int)
 
     # 2. Full Game Moneyline (Home Win)
@@ -103,32 +106,34 @@ def build_targets(df: pd.DataFrame) -> pd.DataFrame:
 
     # 3. Full Game Total (Over)
     if "total_runs" in df.columns:
-        total = df["home_score"] + df["away_score"]
+        total = targets["home_score"] + targets["away_score"]
         targets["over_total"] = (
             total > pd.to_numeric(df["total_runs"], errors="coerce").fillna(0)
         ).astype(int)
 
     # 4. F5 Spread & ML & Total
     if "f5_home_score" in df.columns and "f5_away_score" in df.columns:
-        f5_margin = pd.to_numeric(df["f5_home_score"], errors="coerce").fillna(
-            0
-        ) - pd.to_numeric(df["f5_away_score"], errors="coerce").fillna(0)
+        targets["f5_home_score"] = pd.to_numeric(df["f5_home_score"], errors="coerce").fillna(0)
+        targets["f5_away_score"] = pd.to_numeric(df["f5_away_score"], errors="coerce").fillna(0)
+        
+        f5_margin = targets["f5_home_score"] - targets["f5_away_score"]
 
         if "f5_spread" in df.columns:
             targets["f5_spread_cover"] = (
-                f5_margin + pd.to_numeric(df["f5_spread"], errors="coerce").fillna(0)
-                > 0
+                f5_margin + pd.to_numeric(df["f5_spread"], errors="coerce").fillna(0) > 0
             ).astype(int)
 
         targets["f5_home_win"] = (f5_margin > 0).astype(int)
 
         if "f5_total_runs" in df.columns:
-            f5_total = pd.to_numeric(df["f5_home_score"], errors="coerce").fillna(
-                0
-            ) + pd.to_numeric(df["f5_away_score"], errors="coerce").fillna(0)
+            f5_total = targets["f5_home_score"] + targets["f5_away_score"]
             targets["f5_over_total"] = (
                 f5_total > pd.to_numeric(df["f5_total_runs"], errors="coerce").fillna(0)
             ).astype(int)
+    else:
+        # Fallback if F5 data is missing, just use half of full game to avoid breaking
+        targets["f5_home_score"] = targets["home_score"] / 2.0
+        targets["f5_away_score"] = targets["away_score"] / 2.0
 
     return targets
 
@@ -140,7 +145,7 @@ def build_target(df: pd.DataFrame) -> pd.Series:
 
 def train_test_split_time(
     df: pd.DataFrame, train_ratio: float = 0.8
-) -> Tuple[pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     if not 0.5 <= train_ratio <= 0.95:
         raise PreprocessingError("train_ratio must be between 0.5 and 0.95")
     split_idx = int(len(df) * train_ratio)
@@ -153,6 +158,6 @@ def preprocess(df: pd.DataFrame) -> ProcessedData:
     """Clean data and build target variables."""
     df = clean_data(df)
     targets = build_targets(df)
-    target = targets["spread_cover"]
+    target = targets
     metadata = df[["game_date", "home_team", "away_team", "spread"]].copy()
     return ProcessedData(features=df, target=target, metadata=metadata, targets=targets)

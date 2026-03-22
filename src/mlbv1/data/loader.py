@@ -10,18 +10,19 @@ import http.client
 import json
 import logging
 import os
+import random as _random_mod
 import time
+import urllib.request
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Iterable, List, Optional
+from typing import Any
 from urllib.parse import urlencode
-import urllib.request
-import random as _random_mod
 
 import pandas as pd
 
-from mlbv1.data.mapping import normalize_team, get_stadium_info
+from mlbv1.data.mapping import normalize_team
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +50,9 @@ class GameRecord:
     spread: float
     home_moneyline: int
     away_moneyline: int
-    temperature_f: Optional[float] = None
-    wind_mph: Optional[float] = None
-    precipitation: Optional[float] = None
+    temperature_f: float | None = None
+    wind_mph: float | None = None
+    precipitation: float | None = None
 
 
 class DataLoaderError(RuntimeError):
@@ -88,12 +89,14 @@ class BaseLoader:
         url: str,
         *,
         headers: dict[str, str] | None = None,
+        data: bytes | None = None,
+        method: str | None = None,
         timeout: int = 30,
     ) -> Any:  # noqa: ANN401
-        """GET *url*, decode JSON.  Retries on transient failures."""
+        """GET/POST *url*, decode JSON.  Retries on transient failures."""
         last_exc: Exception | None = None
         for attempt in range(cls.MAX_RETRIES):
-            req = urllib.request.Request(url, headers=headers or {})
+            req = urllib.request.Request(url, headers=headers or {}, data=data, method=method)
             try:
                 with urllib.request.urlopen(req, timeout=timeout) as resp:
                     return json.loads(resp.read().decode("utf-8"))
@@ -191,9 +194,7 @@ class OddsAPILoader(BaseLoader):
         url = f"{self.base_url}/sports/baseball_mlb/odds/?{params}"
         if suppress_errors:
             try:
-                req = urllib.request.Request(url, headers={})
-                with urllib.request.urlopen(req, timeout=30) as resp:
-                    data = json.loads(resp.read().decode("utf-8"))
+                data = self._http_get_json(url)
             except Exception as exc:
                 logger.debug(
                     "Optional Odds API markets '%s' unavailable: %s", markets, exc
@@ -444,7 +445,7 @@ class ActionNetworkLoader(BaseLoader):
         self.base_url = (base_url or self.BASE).rstrip("/")
         self.api_key = api_key  # password if email is provided
         self.email = email
-        self._token: Optional[str] = None
+        self._token: str | None = None
 
     def _login(self) -> str:
         """Establish session. Returns bearer token."""
@@ -452,16 +453,14 @@ class ActionNetworkLoader(BaseLoader):
             return ""
 
         url = f"{self.base_url}/web/v1/users/login"
-        data = json.dumps({"email": self.email, "password": self.api_key}).encode(
+        payload = json.dumps({"email": self.email, "password": self.api_key}).encode(
             "utf-8"
         )
-        req = urllib.request.Request(
-            url, data=data, headers={"Content-Type": "application/json"}
+        data_resp = self._http_get_json(
+            url, data=payload, headers={"Content-Type": "application/json"}
         )
-        with urllib.request.urlopen(req) as resp:
-            data = json.loads(resp.read().decode())
-            self._token = data.get("token")
-            return self._token or ""
+        self._token = data_resp.get("token")
+        return self._token or ""
 
     def load(self) -> pd.DataFrame:
         if not self._token:
@@ -794,7 +793,7 @@ class SyntheticDataLoader(BaseLoader):
 
 def _empty_df() -> pd.DataFrame:
     """Return an empty DataFrame with all required columns."""
-    from mlbv1.data.preprocessor import REQUIRED_COLUMNS, OPTIONAL_COLUMNS
+    from mlbv1.data.preprocessor import OPTIONAL_COLUMNS, REQUIRED_COLUMNS
 
     cols = REQUIRED_COLUMNS + OPTIONAL_COLUMNS
     return pd.DataFrame({col: pd.Series(dtype="object") for col in cols})

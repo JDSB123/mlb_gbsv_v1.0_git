@@ -35,15 +35,16 @@ dashboard = [
 ]
 dev = [
   "pytest==8.2.1",
-  "ruff==0.4.10",
+  "ruff>=0.5.3",
   "mypy==1.10.0",
   "pandas-stubs==2.1.4.231227",
+  "alembic==1.13.1",
 ]
 all = [
   "streamlit>=1.30.0",
   "plotly>=5.18.0",
   "pytest>=8.0.0",
-  "ruff>=0.4.0",
+  "ruff>=0.5.3",
   "mypy>=1.8.0",
   "pandas-stubs>=2.1.0",
 ]
