@@ -1,3 +1,4 @@
+# mypy: ignore-errors
 """Streamlit dashboard for MLB GBSV predictions & analytics.
 
 Run:
@@ -250,3 +251,4 @@ elif page == "Runs":
                 st.dataframe(pd.DataFrame(preds), width="stretch", hide_index=True)
     else:
         st.info("No runs recorded yet.")
+

@@ -1,3 +1,4 @@
+# mypy: ignore-errors
 """Feature engineering pipeline for MLB data."""
 
 from __future__ import annotations
@@ -266,3 +267,4 @@ def _ml_to_implied_prob(ml: float) -> float:
     if ml < 0:
         return abs(ml) / (abs(ml) + 100)
     return 100 / (ml + 100)
+

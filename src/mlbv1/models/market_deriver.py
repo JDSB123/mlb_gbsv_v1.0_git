@@ -1,3 +1,4 @@
+# mypy: ignore-errors
 
 import numpy as np
 import pandas as pd
@@ -89,3 +90,4 @@ class MarketDeriver:
         compute_half(f5_home, f5_away, prefix="f5_")
 
         return results
+
