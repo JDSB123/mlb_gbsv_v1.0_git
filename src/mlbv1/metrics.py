@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -24,7 +25,7 @@ def sharpe_ratio(returns: np.ndarray) -> float:
         return 0.0
     return float(returns.mean() / std)
 
-def evaluate(y_true: pd.DataFrame, y_pred: np.ndarray) -> MetricsReport:
+def evaluate(y_true: pd.DataFrame, y_pred: Any) -> MetricsReport:
     try:
         y_true_clean = y_true[["f5_home_score", "f5_away_score", "home_score", "away_score"]].fillna(0)
         mse = mean_squared_error(y_true_clean, y_pred)

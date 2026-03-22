@@ -46,7 +46,7 @@ class ModelTrainer:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.target_names = ["f5_home_score", "f5_away_score", "home_score", "away_score"]
 
-    def _prepare_targets(self, y: pd.DataFrame) -> pd.DataFrame:
+    def _prepare_targets(self, y: Any) -> pd.DataFrame:
         """Ensure targets exist and are aligned."""
         missing = [col for col in self.target_names if col not in y.columns]
         if missing:
@@ -57,7 +57,7 @@ class ModelTrainer:
     # Random Forest Regression
     # ------------------------------------------------------------------
     def train_random_forest(
-        self, X: pd.DataFrame, y: pd.DataFrame, config: RandomForestConfig
+        self, X: pd.DataFrame, y: Any, config: RandomForestConfig
     ) -> TrainedModel:
         y_multi = self._prepare_targets(y)
         base_model = RandomForestRegressor(
@@ -81,7 +81,7 @@ class ModelTrainer:
     # Ridge Regression (Replacing Logistic)
     # ------------------------------------------------------------------
     def train_logistic_regression(
-        self, X: pd.DataFrame, y: pd.DataFrame, config: LogisticRegressionConfig
+        self, X: pd.DataFrame, y: Any, config: LogisticRegressionConfig
     ) -> TrainedModel:
         # We rename the method technically, but keep the name backwards compatible so train.py doesnt break
         y_multi = self._prepare_targets(y)
@@ -109,7 +109,7 @@ class ModelTrainer:
     # XGBoost
     # ------------------------------------------------------------------
     def train_xgboost(
-        self, X: pd.DataFrame, y: pd.DataFrame, config: XGBoostConfig
+        self, X: pd.DataFrame, y: Any, config: XGBoostConfig
     ) -> TrainedModel:
         import xgboost as xgb
 
@@ -137,7 +137,7 @@ class ModelTrainer:
     # LightGBM
     # ------------------------------------------------------------------
     def train_lightgbm(
-        self, X: pd.DataFrame, y: pd.DataFrame, config: LightGBMConfig
+        self, X: pd.DataFrame, y: Any, config: LightGBMConfig
     ) -> TrainedModel:
         import lightgbm as lgb
 

@@ -42,7 +42,7 @@ class ProcessedData:
     """Container for processed dataset."""
 
     features: pd.DataFrame
-    target: pd.DataFrame | pd.Series
+    target: pd.DataFrame
     metadata: pd.DataFrame
     targets: pd.DataFrame | None = None  # Holds all market targets
 

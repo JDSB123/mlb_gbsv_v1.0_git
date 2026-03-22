@@ -62,7 +62,7 @@ class EnsembleTrainer:
     def build_stacking_ensemble(
         models: list[tuple[str, RegressorLike]],
         X_train: pd.DataFrame,
-        y_train: pd.DataFrame,
+        y_train: Any,
         feature_names: list[str],
         target_names: list[str],
         cv: int = 5,

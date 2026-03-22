@@ -130,9 +130,22 @@ def main() -> None:
     results = predict(model, features.X)
 
     output = processed.metadata.copy()
-    output["prediction"] = results.predictions
-    output["probability"] = results.probabilities
-    output["confidence"] = (results.probabilities - 0.5).abs() * 2
+    mp = results.market_probabilities
+    col = "home_spread_cover_prob"
+    if args.market == "moneyline":
+        col = "home_ml_prob"
+    elif args.market == "total":
+        col = "over_total_prob"
+    elif args.market == "f5_spread":
+        col = "f5_home_spread_cover_prob"
+    elif args.market == "f5_moneyline":
+        col = "f5_home_ml_prob"
+    elif args.market == "f5_total":
+        col = "f5_over_total_prob"
+    
+    output["probability"] = mp[col]
+    output["prediction"] = (output["probability"] > 0.5).astype(int)
+    output["confidence"] = (output["probability"] - 0.5).abs() * 2
 
     output = output.sort_values("confidence", ascending=False)
     logger.info("Top %d predictions:", args.top_n)

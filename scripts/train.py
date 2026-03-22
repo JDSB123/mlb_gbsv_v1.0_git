@@ -116,76 +116,60 @@ def main() -> None:
     trainer = ModelTrainer()
     model_type = config.model.type
 
-    if args.tune:
-        from mlbv1.config import TuningConfig
+    # Standard training
+    if model_type in {"random_forest", "all"}:
+        rf = trainer.train_random_forest(
+            train_features, train_target, config.model.random_forest
+        )
+        trainer.save(rf)
+        acc = trainer.evaluate(rf, test_features, test_target)
+        preds = rf.model.predict(test_features)  # type: ignore
+        m = evaluate(test_target, preds)
+        logger.info(
+            "RF  acc=%.3f  ROI=%.3f  Sharpe=%.3f", acc, m.roi, m.sharpe_ratio
+        )
 
-        tuning = TuningConfig(enabled=True)
-        names = list(ALL_MODELS) if model_type == "all" else [model_type]
-        for name in names:
-            try:
-                model = trainer.tune_hyperparameters(
-                    train_features, train_target, name, tuning
-                )
-                trainer.save(model)
-                acc = trainer.evaluate(model, test_features, test_target)
-                logger.info("%s (tuned) accuracy: %.3f", name, acc)
-            except Exception as exc:
-                logger.error("Tuning %s failed: %s", name, exc)
-    else:
-        # Standard training
-        if model_type in {"random_forest", "all"}:
-            rf = trainer.train_random_forest(
-                train_features, train_target, config.model.random_forest
+    if model_type in {"logistic_regression", "all"}:
+        lr = trainer.train_logistic_regression(
+            train_features, train_target, config.model.logistic_regression
+        )
+        trainer.save(lr)
+        acc = trainer.evaluate(lr, test_features, test_target)
+        preds = lr.model.predict(lr.scaler.transform(test_features))  # type: ignore[union-attr]
+        m = evaluate(test_target, preds)
+        logger.info(
+            "LR  acc=%.3f  ROI=%.3f  Sharpe=%.3f", acc, m.roi, m.sharpe_ratio
+        )
+
+    if model_type in {"xgboost", "all"}:
+        try:
+            xgb = trainer.train_xgboost(
+                train_features, train_target, config.model.xgboost
             )
-            trainer.save(rf)
-            acc = trainer.evaluate(rf, test_features, test_target)
-            preds = rf.model.predict(test_features)
+            trainer.save(xgb)
+            acc = trainer.evaluate(xgb, test_features, test_target)
+            preds = xgb.model.predict(test_features)  # type: ignore
             m = evaluate(test_target, preds)
             logger.info(
-                "RF  acc=%.3f  ROI=%.3f  Sharpe=%.3f", acc, m.roi, m.sharpe_ratio
+                "XGB acc=%.3f  ROI=%.3f  Sharpe=%.3f", acc, m.roi, m.sharpe_ratio
             )
+        except ImportError:
+            logger.warning("xgboost not installed — skipping")
 
-        if model_type in {"logistic_regression", "all"}:
-            lr = trainer.train_logistic_regression(
-                train_features, train_target, config.model.logistic_regression
+    if model_type in {"lightgbm", "all"}:
+        try:
+            lgbm = trainer.train_lightgbm(
+                train_features, train_target, config.model.lightgbm
             )
-            trainer.save(lr)
-            acc = trainer.evaluate(lr, test_features, test_target)
-            preds = lr.model.predict(lr.scaler.transform(test_features))  # type: ignore[union-attr]
+            trainer.save(lgbm)
+            acc = trainer.evaluate(lgbm, test_features, test_target)
+            preds = lgbm.model.predict(test_features)  # type: ignore
             m = evaluate(test_target, preds)
             logger.info(
-                "LR  acc=%.3f  ROI=%.3f  Sharpe=%.3f", acc, m.roi, m.sharpe_ratio
+                "LGBM acc=%.3f  ROI=%.3f  Sharpe=%.3f", acc, m.roi, m.sharpe_ratio
             )
-
-        if model_type in {"xgboost", "all"}:
-            try:
-                xgb = trainer.train_xgboost(
-                    train_features, train_target, config.model.xgboost
-                )
-                trainer.save(xgb)
-                acc = trainer.evaluate(xgb, test_features, test_target)
-                preds = xgb.model.predict(test_features)
-                m = evaluate(test_target, preds)
-                logger.info(
-                    "XGB acc=%.3f  ROI=%.3f  Sharpe=%.3f", acc, m.roi, m.sharpe_ratio
-                )
-            except ImportError:
-                logger.warning("xgboost not installed — skipping")
-
-        if model_type in {"lightgbm", "all"}:
-            try:
-                lgbm = trainer.train_lightgbm(
-                    train_features, train_target, config.model.lightgbm
-                )
-                trainer.save(lgbm)
-                acc = trainer.evaluate(lgbm, test_features, test_target)
-                preds = lgbm.model.predict(test_features)
-                m = evaluate(test_target, preds)
-                logger.info(
-                    "LGBM acc=%.3f  ROI=%.3f  Sharpe=%.3f", acc, m.roi, m.sharpe_ratio
-                )
-            except ImportError:
-                logger.warning("lightgbm not installed — skipping")
+        except ImportError:
+            logger.warning("lightgbm not installed — skipping")
 
     # Optionally build ensemble
     if args.ensemble:
@@ -202,17 +186,17 @@ def main() -> None:
             et = EnsembleTrainer()
             # Convert TrainedModel -> (name, classifier) tuples
             base_pairs: list[tuple[str, Any]] = [
-                (m.name, m.model) for m in loaded_models
+                (m.name, getattr(m, "model", m)) for m in loaded_models
             ]
             feature_names = list(train_features.columns)
 
-            voting = et.build_voting_ensemble(base_pairs, feature_names)
+            voting = et.build_voting_ensemble(base_pairs, feature_names, trainer.target_names)
             _save_ensemble(voting, trainer.output_dir)
             vacc = _evaluate_ensemble(voting, test_features, test_target)
             logger.info("Voting ensemble accuracy: %.3f", vacc)
 
             stacking = et.build_stacking_ensemble(
-                base_pairs, train_features, train_target, feature_names
+                base_pairs, train_features, train_target, feature_names, trainer.target_names
             )
             _save_ensemble(stacking, trainer.output_dir)
             sacc = _evaluate_ensemble(stacking, test_features, test_target)
@@ -236,9 +220,9 @@ def main() -> None:
                 # Evaluate on test set
                 if hasattr(model, "scaler") and model.scaler:
                     scaled = model.scaler.transform(test_features)
-                    preds = model.model.predict(scaled)
+                    preds = model.model.predict(scaled) if hasattr(model, "model") else model.predict(scaled) if hasattr(model, "model") else model.predict(scaled)
                 else:
-                    preds = getattr(model, "model", model).predict(test_features)
+                    preds = model.predict(test_features)  # type: ignore
 
                 # Check accuracy
                 from sklearn.metrics import mean_squared_error

@@ -135,11 +135,11 @@ def main() -> None:
         recommendations = []
         for pick in consensus_picks:
             rec = bankroll.recommend_bet(
-                game_date=pick["game_date"],
-                home_team=pick["home_team"],
-                away_team=pick["away_team"],
-                spread=pick["spread"],
-                probability=pick["probability"],
+                game_date=str(pick["game_date"]),
+                home_team=str(pick["home_team"]),
+                away_team=str(pick["away_team"]),
+                spread=float(str(pick["spread"])),
+                probability=float(str(pick["probability"])),
                 home_moneyline=pick.get("home_moneyline", -110),
                 away_moneyline=pick.get("away_moneyline", -110),
             )
@@ -408,14 +408,14 @@ def _predict_with_all_models(
                         PredictionRecord(
                             run_id=f"{run_id}-{model.name}",
                             model_name=model.name,
-                            game_date=pick["game_date"],
-                            home_team=pick["home_team"],
-                            away_team=pick["away_team"],
-                            spread=pick["spread"],
-                            prediction=pick["prediction"],
-                            probability=pick["probability"],
-                            home_moneyline=pick["home_moneyline"],
-                            away_moneyline=pick["away_moneyline"],
+                            game_date=str(pick["game_date"]),
+                            home_team=str(pick["home_team"]),
+                            away_team=str(pick["away_team"]),
+                            spread=float(str(pick["spread"])),
+                            prediction=int(str(pick["prediction"])),
+                            probability=float(str(pick["probability"])),
+                            home_moneyline=int(str(pick.get("home_moneyline", 0))),
+                            away_moneyline=int(str(pick.get("away_moneyline", 0))),
                         )
                     ]
                 )
@@ -518,11 +518,11 @@ def _build_consensus_picks(
                 "game_date": str(game_date),
                 "home_team": str(home_team),
                 "away_team": str(away_team),
-                "spread": float(spread),
+                "spread": float(str(spread)),
                 "prediction": consensus_prediction,
                 "probability": weighted_home_prob,
-                "home_moneyline": int(home_ml),
-                "away_moneyline": int(away_ml),
+                "home_moneyline": int(str(home_ml)),
+                "away_moneyline": int(str(away_ml)),
                 "model_name": "consensus",
                 "model_count": int(group.shape[0]),
                 "agreement": float(agreement),

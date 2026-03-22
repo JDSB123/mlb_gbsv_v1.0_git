@@ -136,13 +136,13 @@ def _fixed_split_backtest(
         if trained is None:
             continue
 
-        acc = trainer.evaluate(trained, test_X, test_target)
+        acc = trainer.evaluate(trained, test_X, test_target)  # type: ignore  # type: ignore
         test_full_df = processed.features.loc[test_X.index]
-        pred_result = predict(trained, test_X, test_full_df)
+        pred_result = predict(trained, test_X, test_full_df)  # type: ignore  # type: ignore
         preds_raw = pred_result.expected_runs.values
-        probas = pred_result.market_probabilities["home_spread_cover_prob"].values
+        probas = pred_result.market_probabilities["home_spread_cover_prob"]
         preds = (probas > 0.5).astype(int)
-        metrics = evaluate(test_target, preds_raw)
+        metrics = evaluate(test_target, getattr(preds_raw, "values", preds_raw))
 
         logger.info(
             "%s: Accuracy=%.3f  ROI=%.3f  Sharpe=%.3f",
@@ -197,7 +197,7 @@ def _fixed_split_backtest(
                 actual_away_score=int(row["away_score"]),
             )
 
-        trainer.save(trained)
+        trainer.save(trained)  # type: ignore  # type: ignore
 
     # Print summary
     summary = db.get_roi_summary(run_id=run_id)
@@ -258,8 +258,8 @@ def _walk_forward_backtest(
             if trained is None:
                 continue
             test_full_df = df.loc[test_X.index]
-            pred_result = predict(trained, test_X, test_full_df)
-            probas = pred_result.market_probabilities["home_spread_cover_prob"].values
+            pred_result = predict(trained, test_X, test_full_df)  # type: ignore  # type: ignore
+            probas = pred_result.market_probabilities["home_spread_cover_prob"]
             preds = (probas > 0.5).astype(int)
             
             for i, idx in enumerate(test_X.index):
@@ -275,7 +275,7 @@ def _walk_forward_backtest(
             continue
         actuals = [r[0] for r in results]
         preds_list = [r[1] for r in results]
-        metrics = evaluate(actuals, preds_list)
+        metrics = evaluate(pd.DataFrame(actuals), preds_list)  # type: ignore
         logger.info(
             "Walk-Forward %s: Accuracy=%.3f  ROI=%.3f  Sharpe=%.3f  N=%d",
             model_type,
