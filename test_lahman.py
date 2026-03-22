@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 """Test Lahman data enrichment."""
-from src.mlbv1.data.historical_enrichment import LahmanDataEnricher
 import logging
+
+from src.mlbv1.data.historical_enrichment import LahmanDataEnricher
 
 logging.basicConfig(level=logging.INFO)
 

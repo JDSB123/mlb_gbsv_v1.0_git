@@ -58,7 +58,7 @@ class SyntheticHistoryGenerator:
         for year in years:
             # Generate ~2430 games (81 games × 30 teams / 1 = ~2430)
             games_per_team = 162
-            total_games = (len(self.TEAMS) * games_per_team) // 2
+            (len(self.TEAMS) * games_per_team) // 2
 
             # Create team season stats (win rates, run averages)
             team_stats = self._generate_team_stats()

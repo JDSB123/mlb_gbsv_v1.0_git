@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 
 import pandas as pd
@@ -25,10 +26,8 @@ class LahmanDataEnricher:
                 # Get last 5 years
                 dfs = []
                 for y in range(2021, 2026):
-                    try:
+                    with contextlib.suppress(Exception):
                         dfs.append(pitching_stats(y, qual=0))
-                    except Exception:
-                        pass
                 df = pd.concat(dfs, ignore_index=True)
 
             # Rename columns to match expected format
@@ -50,10 +49,8 @@ class LahmanDataEnricher:
             else:
                 dfs = []
                 for y in range(2023, 2026):
-                    try:
+                    with contextlib.suppress(Exception):
                         dfs.append(team_pitching(y))
-                    except Exception:
-                        pass
                 df = pd.concat(dfs, ignore_index=True)
 
             # Extract team ERA, team runs, team wins
