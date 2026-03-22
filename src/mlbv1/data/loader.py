@@ -585,6 +585,11 @@ class MLBStatsAPILoader(BaseLoader):
         home_pitcher = decisions.get("winner", {}) if "winner" in decisions else {}
         away_pitcher = decisions.get("loser", {}) if "loser" in decisions else {}
 
+        home_pitcher_id = home_pitcher.get("id", None)
+        away_pitcher_id = away_pitcher.get("id", None)
+        home_pitcher_name = home_pitcher.get("fullName", "")
+        away_pitcher_name = away_pitcher.get("fullName", "")
+
         home_pitcher_era = MLBStatsAPILoader._get_pitcher_stat(home_pitcher, "era")
         away_pitcher_era = MLBStatsAPILoader._get_pitcher_stat(away_pitcher, "era")
         home_pitcher_wins = MLBStatsAPILoader._get_pitcher_stat(home_pitcher, "wins")
@@ -607,6 +612,10 @@ class MLBStatsAPILoader(BaseLoader):
             "away_pitcher_era": away_pitcher_era,
             "home_pitcher_wins": home_pitcher_wins,
             "away_pitcher_wins": away_pitcher_wins,
+            "home_pitcher_id": home_pitcher_id,
+            "away_pitcher_id": away_pitcher_id,
+            "home_pitcher_name": home_pitcher_name,
+            "away_pitcher_name": away_pitcher_name,
         }
 
     @staticmethod

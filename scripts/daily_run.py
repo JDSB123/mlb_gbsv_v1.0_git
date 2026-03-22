@@ -388,13 +388,15 @@ def _predict_with_all_models(
                     "prediction": (
                         1
                         if float(
-                            result.market_probabilities["spread_home_prob"].iloc[i]
+                            result.market_probabilities["home_spread_cover_prob"].iloc[
+                                i
+                            ]
                         )
                         > 0.5
                         else 0
                     ),
                     "probability": float(
-                        result.market_probabilities["spread_home_prob"].iloc[i]
+                        result.market_probabilities["home_spread_cover_prob"].iloc[i]
                     ),
                     "model_name": model.name,
                     "home_moneyline": int(row.get("home_moneyline", -110)),

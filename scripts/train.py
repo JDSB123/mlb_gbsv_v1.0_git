@@ -125,9 +125,7 @@ def main() -> None:
         acc = trainer.evaluate(rf, test_features, test_target)
         preds = rf.model.predict(test_features)  # type: ignore
         m = evaluate(test_target, preds)
-        logger.info(
-            "RF  acc=%.3f  ROI=%.3f  Sharpe=%.3f", acc, m.roi, m.sharpe_ratio
-        )
+        logger.info("RF  acc=%.3f  ROI=%.3f  Sharpe=%.3f", acc, m.roi, m.sharpe_ratio)
 
     if model_type in {"logistic_regression", "all"}:
         lr = trainer.train_logistic_regression(
@@ -137,9 +135,7 @@ def main() -> None:
         acc = trainer.evaluate(lr, test_features, test_target)
         preds = lr.model.predict(lr.scaler.transform(test_features))  # type: ignore[union-attr]
         m = evaluate(test_target, preds)
-        logger.info(
-            "LR  acc=%.3f  ROI=%.3f  Sharpe=%.3f", acc, m.roi, m.sharpe_ratio
-        )
+        logger.info("LR  acc=%.3f  ROI=%.3f  Sharpe=%.3f", acc, m.roi, m.sharpe_ratio)
 
     if model_type in {"xgboost", "all"}:
         try:
@@ -190,13 +186,19 @@ def main() -> None:
             ]
             feature_names = list(train_features.columns)
 
-            voting = et.build_voting_ensemble(base_pairs, feature_names, trainer.target_names)
+            voting = et.build_voting_ensemble(
+                base_pairs, feature_names, trainer.target_names
+            )
             _save_ensemble(voting, trainer.output_dir)
             vacc = _evaluate_ensemble(voting, test_features, test_target)
             logger.info("Voting ensemble accuracy: %.3f", vacc)
 
             stacking = et.build_stacking_ensemble(
-                base_pairs, train_features, train_target, feature_names, trainer.target_names
+                base_pairs,
+                train_features,
+                train_target,
+                feature_names,
+                trainer.target_names,
             )
             _save_ensemble(stacking, trainer.output_dir)
             sacc = _evaluate_ensemble(stacking, test_features, test_target)
@@ -220,7 +222,11 @@ def main() -> None:
                 # Evaluate on test set
                 if hasattr(model, "scaler") and model.scaler:
                     scaled = model.scaler.transform(test_features)
-                    preds = model.model.predict(scaled) if hasattr(model, "model") else model.predict(scaled) if hasattr(model, "model") else model.predict(scaled)
+                    preds = (
+                        model.model.predict(scaled) 
+                        if hasattr(model, "model") 
+                        else model.predict(scaled)
+                    )
                 else:
                     preds = model.predict(test_features)  # type: ignore
 

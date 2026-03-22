@@ -72,8 +72,82 @@ class LahmanDataEnricher:
 
         df = games_df.copy()
 
-        # TODO: Real pitcher matching requires Chadwick ID crosswalk data.
-        # For now, preserve existing pitcher ERA columns if they exist
+        # Try to use Chadwick crosswalk to map Fangraphs ID to MLBAM ID
+        try:
+            from pybaseball import chadwick_register
+
+            chadwick_df = chadwick_register()
+            # Map IDfg (Fangraphs) from pitcher_stats to key_mlbam
+            # First ensure both exist
+            if "IDfg" in pitcher_stats.columns and not chadwick_df.empty:
+                crosswalk = chadwick_df[["key_fangraphs", "key_mlbam"]].dropna()
+                # key_fangraphs is often float because of NaNs, IDfg is int/str
+                crosswalk["key_fangraphs"] = pd.to_numeric(
+                    crosswalk["key_fangraphs"], errors="coerce"
+                )
+                pitcher_stats["IDfg"] = pd.to_numeric(
+                    pitcher_stats["IDfg"], errors="coerce"
+                )
+
+                # Merge the crosswalk into the pitcher stats
+                p_stats_merged = pd.merge(
+                    pitcher_stats,
+                    crosswalk,
+                    left_on="IDfg",
+                    right_on="key_fangraphs",
+                    how="inner",
+                )
+
+                # If the df has pitcher IDs, we merge on MLBAM ID
+                if "home_pitcher_id" in df.columns:
+                    # Rename era to home_pitcher_era for merging
+                    home_stats = p_stats_merged[["key_mlbam", "ERA", "W"]].copy()
+                    home_stats = home_stats.rename(
+                        columns={"ERA": "lahman_home_era", "W": "lahman_home_wins"}
+                    )
+                    df = pd.merge(
+                        df,
+                        home_stats.drop_duplicates(subset=["key_mlbam"]),
+                        left_on="home_pitcher_id",
+                        right_on="key_mlbam",
+                        how="left",
+                    ).drop(columns=["key_mlbam"], errors="ignore")
+
+                    df["home_pitcher_era"] = df["lahman_home_era"].combine_first(
+                        df.get("home_pitcher_era", 3.5)
+                    )
+                    df.drop(
+                        columns=["lahman_home_era", "lahman_home_wins"],
+                        errors="ignore",
+                        inplace=True,
+                    )
+
+                if "away_pitcher_id" in df.columns:
+                    away_stats = p_stats_merged[["key_mlbam", "ERA", "W"]].copy()
+                    away_stats = away_stats.rename(
+                        columns={"ERA": "lahman_away_era", "W": "lahman_away_wins"}
+                    )
+                    df = pd.merge(
+                        df,
+                        away_stats.drop_duplicates(subset=["key_mlbam"]),
+                        left_on="away_pitcher_id",
+                        right_on="key_mlbam",
+                        how="left",
+                    ).drop(columns=["key_mlbam"], errors="ignore")
+
+                    df["away_pitcher_era"] = df["lahman_away_era"].combine_first(
+                        df.get("away_pitcher_era", 3.5)
+                    )
+                    df.drop(
+                        columns=["lahman_away_era", "lahman_away_wins"],
+                        errors="ignore",
+                        inplace=True,
+                    )
+
+        except Exception as e:
+            logger.warning(f"Chadwick crosswalk mapping failed: {e}")
+
+        # Fallback: For now, preserve existing pitcher ERA columns if they exist
         if "home_pitcher_era" not in df.columns:
             df["home_pitcher_era"] = 3.5  # League average
         if "away_pitcher_era" not in df.columns:
@@ -312,4 +386,3 @@ def enrich_training_data_with_historical_sources(
 
     logger.info(f"✓ Total enriched dataset: {len(df)} games")
     return df
-

@@ -261,13 +261,15 @@ def _walk_forward_backtest(
             pred_result = predict(trained, test_X, test_full_df)  # type: ignore  # type: ignore
             probas = pred_result.market_probabilities["home_spread_cover_prob"]
             preds = (probas > 0.5).astype(int)
-            
+
             for i, idx in enumerate(test_X.index):
                 row = df.loc[idx]
                 actual_margin = row["home_score"] - row["away_score"]
                 spread = row["spread"]
                 actual_cover = 1 if (actual_margin + float(spread)) > 0 else 0
-                all_preds[model_type].append((actual_cover, int(preds[i]), float(probas[i])))
+                all_preds[model_type].append(
+                    (actual_cover, int(preds[i]), float(probas[i]))
+                )
 
     # Report
     for model_type, results in all_preds.items():

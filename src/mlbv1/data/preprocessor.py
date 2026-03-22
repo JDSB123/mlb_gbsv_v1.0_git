@@ -113,14 +113,19 @@ def build_targets(df: pd.DataFrame) -> pd.DataFrame:
 
     # 4. F5 Spread & ML & Total
     if "f5_home_score" in df.columns and "f5_away_score" in df.columns:
-        targets["f5_home_score"] = pd.to_numeric(df["f5_home_score"], errors="coerce").fillna(0)
-        targets["f5_away_score"] = pd.to_numeric(df["f5_away_score"], errors="coerce").fillna(0)
-        
+        targets["f5_home_score"] = pd.to_numeric(
+            df["f5_home_score"], errors="coerce"
+        ).fillna(0)
+        targets["f5_away_score"] = pd.to_numeric(
+            df["f5_away_score"], errors="coerce"
+        ).fillna(0)
+
         f5_margin = targets["f5_home_score"] - targets["f5_away_score"]
 
         if "f5_spread" in df.columns:
             targets["f5_spread_cover"] = (
-                f5_margin + pd.to_numeric(df["f5_spread"], errors="coerce").fillna(0) > 0
+                f5_margin + pd.to_numeric(df["f5_spread"], errors="coerce").fillna(0)
+                > 0
             ).astype(int)
 
         targets["f5_home_win"] = (f5_margin > 0).astype(int)
