@@ -96,7 +96,9 @@ class BaseLoader:
         """GET/POST *url*, decode JSON.  Retries on transient failures."""
         last_exc: Exception | None = None
         for attempt in range(cls.MAX_RETRIES):
-            req = urllib.request.Request(url, headers=headers or {}, data=data, method=method)
+            req = urllib.request.Request(
+                url, headers=headers or {}, data=data, method=method
+            )
             try:
                 with urllib.request.urlopen(req, timeout=timeout) as resp:
                     return json.loads(resp.read().decode("utf-8"))

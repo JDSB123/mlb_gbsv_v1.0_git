@@ -10,8 +10,8 @@ import numpy as np
 import pandas as pd
 from sklearn.linear_model import Ridge
 from sklearn.model_selection import cross_val_predict
-from sklearn.preprocessing import StandardScaler
 from sklearn.multioutput import MultiOutputRegressor
+from sklearn.preprocessing import StandardScaler
 
 logger = logging.getLogger(__name__)
 

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+
 import numpy as np
 import pandas as pd
 from sklearn.metrics import mean_squared_error
+
 
 @dataclass(frozen=True)
 class MetricsReport:
@@ -27,9 +29,9 @@ def evaluate(y_true: pd.DataFrame, y_pred: np.ndarray) -> MetricsReport:
         y_true_clean = y_true[["f5_home_score", "f5_away_score", "home_score", "away_score"]].fillna(0)
         mse = mean_squared_error(y_true_clean, y_pred)
         acc = -mse 
-    except:
+    except Exception:
         acc = -999.0
-        
+    
     roi = 0.00
     sharpe = 0.00
     return MetricsReport(accuracy=acc, roi=roi, sharpe_ratio=sharpe)

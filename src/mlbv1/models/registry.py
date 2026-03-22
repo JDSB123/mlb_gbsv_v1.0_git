@@ -25,9 +25,11 @@ CREATE TABLE IF NOT EXISTS model_registry (
 );
 """
 
+
 @dataclass
 class ModelVersion:
     """Registered Model."""
+
     version_id: int
     model_name: str
     model_type: str
@@ -36,6 +38,7 @@ class ModelVersion:
     accuracy: float
     created_at: str
     is_active: bool
+
 
 class ModelRegistry:
     """SQLite-backed registry to track ML model versions and metrics."""
@@ -62,33 +65,51 @@ class ModelRegistry:
         with self._connect() as conn:
             conn.executescript(_REGISTRY_SCHEMA)
 
-    def register_model(self, model_name: str, model_type: str, file_path: str, feature_names: list[str], accuracy: float) -> int:
+    def register_model(
+        self,
+        model_name: str,
+        model_type: str,
+        file_path: str,
+        feature_names: list[str],
+        accuracy: float,
+    ) -> int:
         """Register a new model version."""
         with self._connect() as conn:
             cur = conn.execute(
-                """INSERT INTO model_registry (model_name, model_type, file_path, feature_names, accuracy) 
+                """INSERT INTO model_registry (model_name, model_type, file_path, feature_names, accuracy)
                    VALUES (?, ?, ?, ?, ?)""",
-                (model_name, model_type, file_path, ",".join(feature_names), accuracy)
+                (model_name, model_type, file_path, ",".join(feature_names), accuracy),
             )
-            return cur.lastrowid # type: ignore
+            return cur.lastrowid  # type: ignore
 
     def promote_to_production(self, version_id: int) -> None:
         """Mark a specific version as active and deactivate others of same type."""
         with self._connect() as conn:
-            cur = conn.execute("SELECT model_name FROM model_registry WHERE version_id = ?", (version_id,))
+            cur = conn.execute(
+                "SELECT model_name FROM model_registry WHERE version_id = ?",
+                (version_id,),
+            )
             row = cur.fetchone()
             if not row:
                 raise ValueError("Model version not found.")
             name = row["model_name"]
-            
-            conn.execute("UPDATE model_registry SET is_active = 0 WHERE model_name = ?", (name,))
-            conn.execute("UPDATE model_registry SET is_active = 1 WHERE version_id = ?", (version_id,))
+
+            conn.execute(
+                "UPDATE model_registry SET is_active = 0 WHERE model_name = ?", (name,)
+            )
+            conn.execute(
+                "UPDATE model_registry SET is_active = 1 WHERE version_id = ?",
+                (version_id,),
+            )
             logger.info("Promoted %s version %d to production.", name, version_id)
 
     def get_production_model(self, model_name: str) -> ModelVersion | None:
         """Get the current active model version metadata."""
         with self._connect() as conn:
-            cur = conn.execute("SELECT * FROM model_registry WHERE model_name = ? AND is_active = 1 LIMIT 1", (model_name,))
+            cur = conn.execute(
+                "SELECT * FROM model_registry WHERE model_name = ? AND is_active = 1 LIMIT 1",
+                (model_name,),
+            )
             row = cur.fetchone()
             if not row:
                 return None
@@ -100,7 +121,7 @@ class ModelRegistry:
                 feature_names=row["feature_names"].split(","),
                 accuracy=row["accuracy"],
                 created_at=row["created_at"],
-                is_active=bool(row["is_active"])
+                is_active=bool(row["is_active"]),
             )
 
     def get_all_production_models(self) -> list[ModelVersion]:
@@ -117,6 +138,7 @@ class ModelRegistry:
                     feature_names=row["feature_names"].split(","),
                     accuracy=row["accuracy"],
                     created_at=row["created_at"],
-                    is_active=bool(row["is_active"])
-                ) for row in rows
+                    is_active=bool(row["is_active"]),
+                )
+                for row in rows
             ]

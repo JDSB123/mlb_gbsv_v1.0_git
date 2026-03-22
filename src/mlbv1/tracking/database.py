@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_DB_PATH = "artifacts/tracking.db"
 
+
 @dataclass
 class PredictionRecord:
     """Single prediction to track."""
@@ -78,11 +79,16 @@ class TrackingDB:
     def _init_schema(self) -> None:
         alembic_ini_path = Path(__file__).resolve().parents[3] / "alembic.ini"
         if not alembic_ini_path.exists():
-            logger.warning("alembic.ini not found at %s. Skipping auto-migration.", alembic_ini_path)
+            logger.warning(
+                "alembic.ini not found at %s. Skipping auto-migration.",
+                alembic_ini_path,
+            )
             return
-            
+
         alembic_cfg = Config(str(alembic_ini_path))
-        alembic_cfg.set_main_option("sqlalchemy.url", f"sqlite:///{self.db_path.absolute()}")
+        alembic_cfg.set_main_option(
+            "sqlalchemy.url", f"sqlite:///{self.db_path.absolute()}"
+        )
         command.upgrade(alembic_cfg, "head")
         logger.info("Tracking DB auto-migrated at %s", self.db_path)
 

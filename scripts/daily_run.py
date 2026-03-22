@@ -351,6 +351,7 @@ def _predict_with_all_models(
 ) -> list[dict[str, Any]]:
     """Load all saved models and generate predictions."""
     from pathlib import Path
+
     from mlbv1.models.registry import ModelRegistry
 
     all_picks: list[dict[str, Any]] = []
@@ -384,8 +385,17 @@ def _predict_with_all_models(
                     "home_team": str(row["home_team"]),
                     "away_team": str(row["away_team"]),
                     "spread": float(row["spread"]),
-                    "prediction": 1 if float(result.market_probabilities["spread_home_prob"].iloc[i]) > 0.5 else 0,
-                    "probability": float(result.market_probabilities["spread_home_prob"].iloc[i]),
+                    "prediction": (
+                        1
+                        if float(
+                            result.market_probabilities["spread_home_prob"].iloc[i]
+                        )
+                        > 0.5
+                        else 0
+                    ),
+                    "probability": float(
+                        result.market_probabilities["spread_home_prob"].iloc[i]
+                    ),
                     "model_name": model.name,
                     "home_moneyline": int(row.get("home_moneyline", -110)),
                     "away_moneyline": int(row.get("away_moneyline", -110)),
@@ -437,7 +447,7 @@ def _build_model_weights(
             accuracy = float(accuracy_raw)
         except (TypeError, ValueError):
             continue
-        if True: # accuracy can be negative MSE now
+        if True:  # accuracy can be negative MSE now
             recency_weight = decay**age
             weighted_sums[model] = weighted_sums.get(model, 0.0) + (
                 accuracy * recency_weight

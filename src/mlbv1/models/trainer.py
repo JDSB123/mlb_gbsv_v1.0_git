@@ -11,15 +11,14 @@ import joblib
 import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import Ridge
-from sklearn.metrics import mean_squared_error, mean_absolute_error
-from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import mean_squared_error
 from sklearn.multioutput import MultiOutputRegressor
+from sklearn.preprocessing import StandardScaler
 
 from mlbv1.config import (
     LightGBMConfig,
     LogisticRegressionConfig,
     RandomForestConfig,
-    TuningConfig,
     XGBoostConfig,
 )
 

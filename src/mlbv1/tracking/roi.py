@@ -95,7 +95,9 @@ class BankrollManager:
             logger.warning(
                 "Anomaly Detected: Extremely high edge (%.1f%%) for %s vs %s. "
                 "This may indicate a data error or stale odds. Ignoring heavily mispriced line.",
-                edge * 100, home_team, away_team
+                edge * 100,
+                home_team,
+                away_team,
             )
             return None
 

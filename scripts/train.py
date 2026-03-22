@@ -39,10 +39,10 @@ def _save_ensemble(model: Any, output_dir: Path) -> Path:
     return path
 
 
-def _evaluate_ensemble(model: Any, X: pd.DataFrame, y: pd.Series) -> float:
+def _evaluate_ensemble(model: Any, X: pd.DataFrame, y: pd.DataFrame) -> float:
     """Evaluate an EnsembleModel's accuracy."""
     preds = model.predict(X)
-    return float(accuracy_score(y, preds))
+    return evaluate(y, preds).accuracy
 
 
 def build_loader(config: AppConfig):  # noqa: ANN201
@@ -227,39 +227,56 @@ def main() -> None:
     # Register Models
     try:
         from mlbv1.models.registry import ModelRegistry
+
         registry = ModelRegistry()
         for name in ALL_MODELS:
             model_path = trainer.output_dir / f"{name}.pkl"
             if model_path.exists():
                 model = load_model(str(model_path))
                 # Evaluate on test set
-                if hasattr(model, 'scaler') and model.scaler:
+                if hasattr(model, "scaler") and model.scaler:
                     scaled = model.scaler.transform(test_features)
                     preds = model.model.predict(scaled)
                 else:
-                    preds = getattr(model, 'model', model).predict(test_features)
-                
+                    preds = getattr(model, "model", model).predict(test_features)
+
                 # Check accuracy
                 from sklearn.metrics import mean_squared_error
-                acc = -float(mean_squared_error(test_target[["f5_home_score", "f5_away_score", "home_score", "away_score"]].fillna(0), preds))
-                
+
+                acc = -float(
+                    mean_squared_error(
+                        test_target[
+                            [
+                                "f5_home_score",
+                                "f5_away_score",
+                                "home_score",
+                                "away_score",
+                            ]
+                        ].fillna(0),
+                        preds,
+                    )
+                )
+
                 # Register
                 vid = registry.register_model(
                     model_name=name,
                     model_type=name,
                     file_path=str(model_path),
                     feature_names=model.feature_names,
-                    accuracy=acc
+                    accuracy=acc,
                 )
-                
+
                 # Promote logic: Auto-promote if no active model exists, or if accuracy is better
                 current = registry.get_production_model(name)
                 if current is None or acc > current.accuracy:
                     registry.promote_to_production(vid)
-                    logger.info("Promoted %s v%d to production (acc: %.3f)", name, vid, acc)
+                    logger.info(
+                        "Promoted %s v%d to production (acc: %.3f)", name, vid, acc
+                    )
 
     except Exception as exc:
         logger.warning("Could not register models: %s", exc)
+
 
 if __name__ == "__main__":
     main()

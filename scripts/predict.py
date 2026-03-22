@@ -98,13 +98,22 @@ def main() -> None:
     if args.model_name:
         try:
             from mlbv1.models.registry import ModelRegistry
+
             registry = ModelRegistry()
             prod_model = registry.get_production_model(args.model_name)
             if prod_model:
                 model_path = prod_model.file_path
-                logger.info("Using production model from registry: %s (v%d)", model_path, prod_model.version_id)
+                logger.info(
+                    "Using production model from registry: %s (v%d)",
+                    model_path,
+                    prod_model.version_id,
+                )
             else:
-                logger.warning("No production model found for '%s', falling back to %s", args.model_name, model_path)
+                logger.warning(
+                    "No production model found for '%s', falling back to %s",
+                    args.model_name,
+                    model_path,
+                )
         except Exception as exc:
             logger.warning("Could not check ModelRegistry: %s", exc)
 
