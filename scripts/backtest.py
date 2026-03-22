@@ -14,12 +14,14 @@ import argparse
 import json
 import logging
 import uuid
+from typing import Any
 
 from mlbv1.config import AppConfig
 from mlbv1.data.loader import MLBStatsAPILoader
 from mlbv1.data.preprocessor import preprocess, train_test_split_time
 from mlbv1.features.engineer import engineer_features
 from mlbv1.metrics import evaluate
+from mlbv1.models.predictor import predict
 from mlbv1.models.trainer import ModelTrainer
 from mlbv1.tracking.database import PredictionRecord, RunRecord, TrackingDB
 
@@ -101,8 +103,8 @@ def main() -> None:
 
 
 def _fixed_split_backtest(
-    features: object,
-    processed: object,
+    features: Any,
+    processed: Any,
     config: AppConfig,
     db: TrackingDB,
     run_id: str,
@@ -135,13 +137,12 @@ def _fixed_split_backtest(
             continue
 
         acc = trainer.evaluate(trained, test_X, test_target)
-        preds = trained.model.predict(
-            trained.scaler.transform(test_X) if trained.scaler else test_X
-        )
-        probas = trained.model.predict_proba(
-            trained.scaler.transform(test_X) if trained.scaler else test_X
-        )[:, 1]
-        metrics = evaluate(test_target, preds)
+        test_full_df = processed.features.loc[test_X.index]
+        pred_result = predict(trained, test_X, test_full_df)
+        preds_raw = pred_result.expected_runs.values
+        probas = pred_result.market_probabilities["home_spread_cover_prob"].values
+        preds = (probas > 0.5).astype(int)
+        metrics = evaluate(test_target, preds_raw)
 
         logger.info(
             "%s: Accuracy=%.3f  ROI=%.3f  Sharpe=%.3f",
@@ -204,8 +205,8 @@ def _fixed_split_backtest(
 
 
 def _walk_forward_backtest(
-    features: object,
-    processed: object,
+    features: Any,
+    processed: Any,
     config: AppConfig,
     db: TrackingDB,
     run_id: str,
@@ -247,7 +248,7 @@ def _walk_forward_backtest(
         train_X = X[train_mask]
         train_y = target[train_mask]
         test_X = X[test_mask]
-        test_y = target[test_mask]
+        target[test_mask]
 
         if len(train_X) < 30 or len(test_X) == 0:
             continue
@@ -256,14 +257,17 @@ def _walk_forward_backtest(
             trained = _train_model(trainer, model_type, train_X, train_y, config)
             if trained is None:
                 continue
-            preds = trained.model.predict(
-                trained.scaler.transform(test_X) if trained.scaler else test_X
-            )
-            probas = trained.model.predict_proba(
-                trained.scaler.transform(test_X) if trained.scaler else test_X
-            )[:, 1]
-            for actual, pred, proba in zip(test_y, preds, probas, strict=False):
-                all_preds[model_type].append((int(actual), int(pred), float(proba)))
+            test_full_df = df.loc[test_X.index]
+            pred_result = predict(trained, test_X, test_full_df)
+            probas = pred_result.market_probabilities["home_spread_cover_prob"].values
+            preds = (probas > 0.5).astype(int)
+            
+            for i, idx in enumerate(test_X.index):
+                row = df.loc[idx]
+                actual_margin = row["home_score"] - row["away_score"]
+                spread = row["spread"]
+                actual_cover = 1 if (actual_margin + float(spread)) > 0 else 0
+                all_preds[model_type].append((actual_cover, int(preds[i]), float(probas[i])))
 
     # Report
     for model_type, results in all_preds.items():
@@ -310,7 +314,7 @@ def _train_model(
     import pandas as pd
 
     assert isinstance(X, pd.DataFrame)
-    assert isinstance(y, pd.Series)
+    assert isinstance(y, (pd.Series, pd.DataFrame))
 
     if model_type == "random_forest":
         return trainer.train_random_forest(X, y, config.model.random_forest)
