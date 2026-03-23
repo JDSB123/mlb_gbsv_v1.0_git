@@ -8,13 +8,13 @@
 
 param(
     [Parameter(Mandatory=$false)]
-    [string]$ResourceGroup = "mlb-gbsv-v1-az-rg",
+    [string]$ResourceGroup = "mlb-gbsv-v2-az-rg",
 
     [Parameter(Mandatory=$false)]
     [string]$Location = "centralus",
 
     [Parameter(Mandatory=$false)]
-    [string]$NamePrefix = "mlb-gbsv-v1-az",
+    [string]$NamePrefix = "mlb-gbsv-$(Get-Random -Minimum 1000 -Maximum 9999)-az",
 
     [Parameter(Mandatory=$false)]
     [string]$ServicePrincipalObjectId = ""
@@ -36,13 +36,13 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "  ✅ Azure CLI: $azVersion" -ForegroundColor Green
 
-# Check Docker
-docker --version 2>&1 | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "❌ Docker not found. Install Docker Desktop" -ForegroundColor Red
-    exit 1
-}
-Write-Host "  ✅ Docker is running" -ForegroundColor Green
+# Check Docker (Skipped - utilizing Azure ACR Build instead)
+# docker --version 2>&1 | Out-Null
+# if ($LASTEXITCODE -ne 0) {
+#     Write-Host "❌ Docker not found. Install Docker Desktop" -ForegroundColor Red
+#     exit 1
+# }
+# Write-Host "  ✅ Docker is running" -ForegroundColor Green
 
 # Check Azure login
 $account = az account show 2>&1 | ConvertFrom-Json
@@ -128,45 +128,27 @@ if (Test-Path $secretsScript) {
 # Step 5: Build and push Docker image
 Write-Host "`nStep 5: Building and pushing Docker image..." -ForegroundColor Yellow
 
-# Login to ACR
-Write-Host "  Logging into Azure Container Registry..." -ForegroundColor Yellow
-az acr login --name $acrName --output none
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "❌ Failed to login to ACR" -ForegroundColor Red
-    exit 1
-}
-
 # Get ACR login server
 $acrServer = az acr show --name $acrName --query loginServer --output tsv
 Write-Host "  ACR Login Server: $acrServer" -ForegroundColor Gray
 
-# Build and push image
-$imageName = "${acrServer}/mlb-predictor:latest"
+# Build and push image using Azure Container Registry Tasks
 $imageTag = "$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-$imageTagged = "${acrServer}/mlb-predictor:$imageTag"
 
-Write-Host "  Building Docker image..." -ForegroundColor Yellow
-docker build -t $imageName -t $imageTagged . --platform linux/amd64
+Write-Host "  Building and pushing Docker image via Azure ACR Build (No local daemon required)..." -ForegroundColor Yellow
+az acr build --registry $acrName --image "mlb-predictor:latest" --image "mlb-predictor:$imageTag" .
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "❌ Docker build failed" -ForegroundColor Red
+    Write-Host "❌ ACR Build failed" -ForegroundColor Red
     exit 1
 }
-
-Write-Host "  Pushing Docker image to ACR..." -ForegroundColor Yellow
-docker push $imageName
-docker push $imageTagged
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "❌ Docker push failed" -ForegroundColor Red
-    exit 1
-}
-Write-Host "  ✅ Docker image pushed: $imageName" -ForegroundColor Green
+Write-Host "  ✅ Docker image built and pushed via ACR" -ForegroundColor Green
 
 # Step 6: Update Container App
 Write-Host "`nStep 6: Updating Container App..." -ForegroundColor Yellow
 az containerapp update `
     --name $acaName `
     --resource-group $ResourceGroup `
-    --image $imageName `
+    --image "${acrServer}/mlb-predictor:latest" `
     --output none
 
 if ($LASTEXITCODE -ne 0) {

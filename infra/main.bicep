@@ -8,6 +8,7 @@ param sqlAdminPassword string = newGuid()
 @secure()
 param triggerApiKey string = ''
 param allowUnauthTrigger bool = false
+param containerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
 
 var acrName = replace('${namePrefix}-acr', '-', '')
 var storageName = replace('${namePrefix}-sto', '-', '')
@@ -198,7 +199,7 @@ resource acaApp 'Microsoft.App/containerApps@2023-05-01' = {
       containers: [
         {
           name: 'mlbv1'
-          image: '${acr.properties.loginServer}/mlbv1:latest'
+          image: containerImage
           resources: {
             cpu: json('2.0')
             memory: '4Gi'

@@ -1,5 +1,5 @@
 # Pin base image to specific version for reproducibility
-FROM python:3.11.8-slim AS base
+FROM python:3.12-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
@@ -15,12 +15,11 @@ RUN useradd -m -u 1000 mlbuser && \
   chown -R mlbuser:mlbuser /app
 
 # Copy dependency files
-COPY --chown=mlbuser:mlbuser pyproject.toml README.md requirements-lock.txt /app/
+COPY --chown=mlbuser:mlbuser pyproject.toml README.md /app/
 
 # Install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip \
-  && pip install --no-cache-dir -r requirements-lock.txt \
-  && pip install --no-deps -e .
+  && pip install --no-cache-dir .
 
 # Copy application code
 COPY --chown=mlbuser:mlbuser src /app/src

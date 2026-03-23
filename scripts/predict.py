@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import logging
 
+import pandas as pd
+
 from mlbv1.config import AppConfig
 from mlbv1.data.loader import (
     ActionNetworkLoader,
@@ -18,6 +20,7 @@ from mlbv1.data.loader import (
 from mlbv1.data.preprocessor import preprocess
 from mlbv1.features.engineer import engineer_features
 from mlbv1.models.predictor import load_model, predict
+from mlbv1.tracking.roi import BankrollManager
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -146,6 +149,21 @@ def main() -> None:
     output["probability"] = mp[col]
     output["prediction"] = (output["probability"] > 0.5).astype(int)
     output["confidence"] = (output["probability"] - 0.5).abs() * 2
+
+    # Kelly Criterion & Bet Sizing
+    bm = BankrollManager()
+    output["kelly_fraction"] = output.apply(
+        lambda row: bm.kelly_size(
+            row["probability"] if row["prediction"] == 1 else 1 - row["probability"],
+            # Fallback odds for kelly sizing, assuming standard -110 if missing
+            -110 if "home_moneyline" not in row or pd.isna(row.get("home_moneyline")) else row["home_moneyline"]
+        ),
+        axis=1
+    )
+    # Apply max bet cap
+    output["suggested_bet_$"] = output["kelly_fraction"] * bm.balance
+    output["suggested_bet_$"] = output["suggested_bet_$"].clip(upper=(bm.balance * bm.config.max_bet_pct))
+    output["suggested_bet_$"] = output["suggested_bet_$"].round(2)
 
     output = output.sort_values("confidence", ascending=False)
     logger.info("Top %d predictions:", args.top_n)

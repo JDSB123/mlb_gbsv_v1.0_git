@@ -1,0 +1,11 @@
+name: mlbv1
+metadata:
+  template: mlb-gbsv
+services:
+  app:
+    project: .
+    language: python
+    host: containerapp
+    docker:
+      path: ./Dockerfile
+      context: .
