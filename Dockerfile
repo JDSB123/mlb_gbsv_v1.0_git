@@ -15,7 +15,7 @@ RUN useradd -m -u 1000 mlbuser && \
   chown -R mlbuser:mlbuser /app
 
 # Copy dependency files
-COPY --chown=mlbuser:mlbuser pyproject.toml README.md /app/
+COPY --chown=mlbuser:mlbuser pyproject.toml README.md alembic.ini /app/
 
 # Install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip \
