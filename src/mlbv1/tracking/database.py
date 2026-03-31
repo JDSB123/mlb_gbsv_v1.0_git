@@ -6,6 +6,8 @@ analysis, ROI tracking, and model comparison.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import sqlite3
 from collections.abc import Generator
@@ -269,6 +271,78 @@ class TrackingDB:
                 (run_id, game_date, bet_amount, payout, balance),
             )
 
+    def publish_slate(
+        self,
+        slate_date: str,
+        run_id: str,
+        rows: list[dict[str, Any]],
+        manifest: dict[str, Any],
+        *,
+        status: str = "published",
+    ) -> str:
+        """Atomically replace the published slate for a date and persist manifest.
+
+        Returns the SHA256 checksum of serialized rows.
+        """
+        if not rows:
+            raise ValueError("Cannot publish an empty slate")
+
+        serialized_rows: list[str] = [
+            json.dumps(row, sort_keys=True, separators=(",", ":"), default=str)
+            for row in rows
+        ]
+        checksum = hashlib.sha256("".join(serialized_rows).encode("utf-8")).hexdigest()
+
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM published_slate WHERE slate_date = ?",
+                (slate_date,),
+            )
+            conn.executemany(
+                """INSERT INTO published_slate
+                   (slate_date, run_id, row_order, game, segment, market_type, pick, row_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                [
+                    (
+                        slate_date,
+                        run_id,
+                        idx,
+                        str(row.get("game", "")),
+                        str(row.get("segment", "")),
+                        str(row.get("market_type", "")),
+                        str(row.get("pick", "")),
+                        payload,
+                    )
+                    for idx, (row, payload) in enumerate(zip(rows, serialized_rows, strict=False))
+                ],
+            )
+            conn.execute(
+                """INSERT INTO slate_manifests
+                   (slate_date, run_id, status, checksum, manifest_json, created_at)
+                   VALUES (?, ?, ?, ?, ?, datetime('now'))
+                   ON CONFLICT(slate_date)
+                   DO UPDATE SET
+                       run_id = excluded.run_id,
+                       status = excluded.status,
+                       checksum = excluded.checksum,
+                       manifest_json = excluded.manifest_json,
+                       created_at = datetime('now')""",
+                (
+                    slate_date,
+                    run_id,
+                    status,
+                    checksum,
+                    json.dumps(manifest, sort_keys=True, default=str),
+                ),
+            )
+        logger.info(
+            "Published slate SSOT for %s (%d rows, checksum=%s)",
+            slate_date,
+            len(rows),
+            checksum[:12],
+        )
+        return checksum
+
     def try_start_pipeline(self) -> bool:
         """Atomically mark pipeline as running if no run is currently active."""
         with self._connect() as conn:
@@ -404,6 +478,52 @@ class TrackingDB:
                    ORDER BY accuracy DESC"""
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def get_published_slate(self, slate_date: str) -> list[dict[str, Any]]:
+        """Return the canonical published slate rows for a date."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT row_json
+                   FROM published_slate
+                   WHERE slate_date = ?
+                   ORDER BY row_order ASC""",
+                (slate_date,),
+            ).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                out.append(json.loads(str(row["row_json"])))
+            except json.JSONDecodeError:
+                logger.warning("Skipping malformed published_slate row for %s", slate_date)
+        return out
+
+    def get_slate_manifest(self, slate_date: str) -> dict[str, Any] | None:
+        """Fetch manifest metadata for the published slate on a date."""
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT slate_date, run_id, status, checksum, manifest_json, created_at
+                   FROM slate_manifests
+                   WHERE slate_date = ?""",
+                (slate_date,),
+            ).fetchone()
+        if not row:
+            return None
+        manifest_json = row["manifest_json"]
+        parsed: dict[str, Any]
+        try:
+            parsed = json.loads(str(manifest_json))
+        except json.JSONDecodeError:
+            parsed = {}
+        parsed.update(
+            {
+                "slate_date": row["slate_date"],
+                "run_id": row["run_id"],
+                "status": row["status"],
+                "checksum": row["checksum"],
+                "created_at": row["created_at"],
+            }
+        )
+        return parsed
 
     def get_pipeline_status(self) -> dict[str, Any]:
         """Get the shared pipeline status used by health checks."""

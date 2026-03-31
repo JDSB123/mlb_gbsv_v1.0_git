@@ -15,9 +15,11 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import logging
 import os
 import sys
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -201,6 +203,9 @@ def _build_pick_rows(
     model_results: dict[str, PredictionResult],
     today: str,
     *,
+    run_id: str,
+    generated_at_utc: str,
+    source_provider: str = "odds_api",
     cold_start: bool = False,
     features_X: pd.DataFrame | None = None,
 ) -> list[dict[str, Any]]:
@@ -211,12 +216,14 @@ def _build_pick_rows(
     games_deduped = games_df.groupby(
         ["home_team", "away_team"], sort=False
     ).first().reset_index()
+    model_names = sorted(model_results.keys())
 
     for gi, game in games_deduped.iterrows():
         home = game["home_team"]
         away = game["away_team"]
         matchup = f"{away} @ {home}"
         game_time = str(game["game_date"])
+        source_event_id = str(game.get("event_id", ""))
 
         # Feature lookup for rationale enrichment
         feat: dict[str, float] | None = None
@@ -267,12 +274,16 @@ def _build_pick_rows(
             except (TypeError, ValueError):
                 return fallback
 
-        fg_spread = _odds(game.get("spread"), -1.5)
+        fg_spread_raw = _odds(game.get("spread"))
+        fg_spread = -1.5 if pd.isna(fg_spread_raw) else fg_spread_raw
+        fg_spread_defaulted = pd.isna(fg_spread_raw)
         fg_home_spread_odds = _odds(game.get("home_spread_odds"))
         fg_away_spread_odds = _odds(game.get("away_spread_odds"))
         fg_home_ml = _odds(game.get("home_moneyline"))
         fg_away_ml = _odds(game.get("away_moneyline"))
-        fg_total = _odds(game.get("total_runs"), 8.5)
+        fg_total_raw = _odds(game.get("total_runs"))
+        fg_total = 8.5 if pd.isna(fg_total_raw) else fg_total_raw
+        fg_total_defaulted = pd.isna(fg_total_raw)
         fg_over_odds = _odds(game.get("over_odds"))
         fg_under_odds = _odds(game.get("under_odds"))
 
@@ -288,12 +299,16 @@ def _build_pick_rows(
         fg_has_odds = not (pd.isna(fg_home_ml) and pd.isna(fg_away_ml))
 
         # F5 Market Data
-        f5_spread = _odds(game.get("f5_spread"), 0.0)
+        f5_spread_raw = _odds(game.get("f5_spread"))
+        f5_spread = 0.0 if pd.isna(f5_spread_raw) else f5_spread_raw
+        f5_spread_defaulted = pd.isna(f5_spread_raw)
         f5_home_spread_odds = _odds(game.get("f5_home_spread_odds"))
         f5_away_spread_odds = _odds(game.get("f5_away_spread_odds"))
         f5_home_ml = _odds(game.get("f5_home_moneyline"))
         f5_away_ml = _odds(game.get("f5_away_moneyline"))
-        f5_total = _odds(game.get("f5_total_runs"), 0.0)
+        f5_total_raw = _odds(game.get("f5_total_runs"))
+        f5_total = 0.0 if pd.isna(f5_total_raw) else f5_total_raw
+        f5_total_defaulted = pd.isna(f5_total_raw)
         f5_over_odds = _odds(game.get("f5_over_odds"))
         f5_under_odds = _odds(game.get("f5_under_odds"))
 
@@ -328,6 +343,8 @@ def _build_pick_rows(
                 "model_prob": avg.get("home_spread_cover_prob", 0.5),
                 "counter_odds": fg_away_spread_odds if not pd.isna(fg_away_spread_odds) else fg_home_spread_odds,
                 "line": fg_spread,
+                "line_defaulted": fg_spread_defaulted,
+                "counter_defaulted": pd.isna(fg_away_spread_odds),
             })
 
         if not pd.isna(fg_home_ml):
@@ -338,6 +355,8 @@ def _build_pick_rows(
                 "model_prob": avg.get("home_ml_prob", 0.5),
                 "counter_odds": fg_away_ml if not pd.isna(fg_away_ml) else fg_home_ml,
                 "line": None,
+                "line_defaulted": False,
+                "counter_defaulted": pd.isna(fg_away_ml),
             })
         if not pd.isna(fg_away_ml):
             fg_markets.append({
@@ -347,6 +366,8 @@ def _build_pick_rows(
                 "model_prob": avg.get("away_ml_prob", 0.5),
                 "counter_odds": fg_home_ml if not pd.isna(fg_home_ml) else fg_away_ml,
                 "line": None,
+                "line_defaulted": False,
+                "counter_defaulted": pd.isna(fg_home_ml),
             })
 
         if not pd.isna(fg_over_odds):
@@ -357,6 +378,8 @@ def _build_pick_rows(
                 "model_prob": avg.get("over_total_prob", 0.5),
                 "counter_odds": fg_under_odds if not pd.isna(fg_under_odds) else fg_over_odds,
                 "line": fg_total,
+                "line_defaulted": fg_total_defaulted,
+                "counter_defaulted": pd.isna(fg_under_odds),
             })
         if not pd.isna(fg_under_odds):
             fg_markets.append({
@@ -366,10 +389,12 @@ def _build_pick_rows(
                 "model_prob": 1.0 - avg.get("over_total_prob", 0.5),
                 "counter_odds": fg_over_odds if not pd.isna(fg_over_odds) else fg_under_odds,
                 "line": fg_total,
+                "line_defaulted": fg_total_defaulted,
+                "counter_defaulted": pd.isna(fg_over_odds),
             })
 
         # Team Totals (premium — only when API provides real lines)
-        if not pd.isna(home_tt_over_odds):
+        if not pd.isna(home_tt_over_odds) and not pd.isna(home_tt):
             fg_markets.append({
                 "market_type": "Team Total",
                 "pick": f"{home} Over {home_tt}",
@@ -377,8 +402,10 @@ def _build_pick_rows(
                 "model_prob": avg.get("home_tt_over_prob", 0.5),
                 "counter_odds": home_tt_under_odds if not pd.isna(home_tt_under_odds) else home_tt_over_odds,
                 "line": home_tt,
+                "line_defaulted": False,
+                "counter_defaulted": pd.isna(home_tt_under_odds),
             })
-        if not pd.isna(home_tt_under_odds):
+        if not pd.isna(home_tt_under_odds) and not pd.isna(home_tt):
             fg_markets.append({
                 "market_type": "Team Total",
                 "pick": f"{home} Under {home_tt}",
@@ -386,8 +413,10 @@ def _build_pick_rows(
                 "model_prob": 1.0 - avg.get("home_tt_over_prob", 0.5),
                 "counter_odds": home_tt_over_odds if not pd.isna(home_tt_over_odds) else home_tt_under_odds,
                 "line": home_tt,
+                "line_defaulted": False,
+                "counter_defaulted": pd.isna(home_tt_over_odds),
             })
-        if not pd.isna(away_tt_over_odds):
+        if not pd.isna(away_tt_over_odds) and not pd.isna(away_tt):
             fg_markets.append({
                 "market_type": "Team Total",
                 "pick": f"{away} Over {away_tt}",
@@ -395,8 +424,10 @@ def _build_pick_rows(
                 "model_prob": avg.get("away_tt_over_prob", 0.5),
                 "counter_odds": away_tt_under_odds if not pd.isna(away_tt_under_odds) else away_tt_over_odds,
                 "line": away_tt,
+                "line_defaulted": False,
+                "counter_defaulted": pd.isna(away_tt_under_odds),
             })
-        if not pd.isna(away_tt_under_odds):
+        if not pd.isna(away_tt_under_odds) and not pd.isna(away_tt):
             fg_markets.append({
                 "market_type": "Team Total",
                 "pick": f"{away} Under {away_tt}",
@@ -404,6 +435,8 @@ def _build_pick_rows(
                 "model_prob": 1.0 - avg.get("away_tt_over_prob", 0.5),
                 "counter_odds": away_tt_over_odds if not pd.isna(away_tt_over_odds) else away_tt_under_odds,
                 "line": away_tt,
+                "line_defaulted": False,
+                "counter_defaulted": pd.isna(away_tt_over_odds),
             })
 
         if fg_markets:
@@ -421,6 +454,8 @@ def _build_pick_rows(
                 "model_prob": avg.get("f5_home_spread_cover_prob", 0.5),
                 "counter_odds": f5_away_spread_odds if not pd.isna(f5_away_spread_odds) else f5_home_spread_odds,
                 "line": f5_spread_display,
+                "line_defaulted": f5_spread_defaulted or f5_spread == 0.0,
+                "counter_defaulted": pd.isna(f5_away_spread_odds),
             })
 
         if not pd.isna(f5_home_ml):
@@ -431,6 +466,8 @@ def _build_pick_rows(
                 "model_prob": avg.get("f5_home_ml_prob", 0.5),
                 "counter_odds": f5_away_ml if not pd.isna(f5_away_ml) else f5_home_ml,
                 "line": None,
+                "line_defaulted": False,
+                "counter_defaulted": pd.isna(f5_away_ml),
             })
         if not pd.isna(f5_away_ml):
             f5_markets.append({
@@ -440,25 +477,33 @@ def _build_pick_rows(
                 "model_prob": avg.get("f5_away_ml_prob", 0.5),
                 "counter_odds": f5_home_ml if not pd.isna(f5_home_ml) else f5_away_ml,
                 "line": None,
+                "line_defaulted": False,
+                "counter_defaulted": pd.isna(f5_home_ml),
             })
 
         if not pd.isna(f5_over_odds):
+            f5_total_line = f5_total if f5_total > 0 else 4.5
             f5_markets.append({
                 "market_type": "Total",
-                "pick": f"F5 Over {f5_total if f5_total > 0 else 4.5}",
+                "pick": f"F5 Over {f5_total_line}",
                 "odds_current": f5_over_odds,
                 "model_prob": avg.get("f5_over_total_prob", 0.5),
                 "counter_odds": f5_under_odds if not pd.isna(f5_under_odds) else f5_over_odds,
-                "line": f5_total if f5_total > 0 else 4.5,
+                "line": f5_total_line,
+                "line_defaulted": f5_total_defaulted or f5_total <= 0,
+                "counter_defaulted": pd.isna(f5_under_odds),
             })
         if not pd.isna(f5_under_odds):
+            f5_total_line = f5_total if f5_total > 0 else 4.5
             f5_markets.append({
                 "market_type": "Total",
-                "pick": f"F5 Under {f5_total if f5_total > 0 else 4.5}",
+                "pick": f"F5 Under {f5_total_line}",
                 "odds_current": f5_under_odds,
                 "model_prob": 1.0 - avg.get("f5_over_total_prob", 0.5),
                 "counter_odds": f5_over_odds if not pd.isna(f5_over_odds) else f5_under_odds,
-                "line": f5_total if f5_total > 0 else 4.5,
+                "line": f5_total_line,
+                "line_defaulted": f5_total_defaulted or f5_total <= 0,
+                "counter_defaulted": pd.isna(f5_over_odds),
             })
 
         if f5_markets:
@@ -505,9 +550,11 @@ def _build_pick_rows(
                 matching_books = games_df[
                     (games_df["home_team"] == home) & (games_df["away_team"] == away)
                 ]
-                ml_values = matching_books["home_moneyline"].tolist()
+                ml_values = pd.to_numeric(
+                    matching_books["home_moneyline"], errors="coerce"
+                ).dropna()
                 if len(ml_values) > 1:
-                    line_move = f"{int(min(ml_values))} → {int(max(ml_values))}"
+                    line_move = f"{int(ml_values.min())} → {int(ml_values.max())}"
                 else:
                     line_move = "—"
 
@@ -541,6 +588,10 @@ def _build_pick_rows(
 
                 rows.append({
                     "date": today,
+                    "run_id": run_id,
+                    "generated_at_utc": generated_at_utc,
+                    "source_provider": source_provider,
+                    "source_event_id": source_event_id,
                     "game": matchup,
                     "home_team": home,
                     "away_team": away,
@@ -561,12 +612,125 @@ def _build_pick_rows(
                     "kelly": round(kelly, 4),
                     "confidence": round(confidence, 4),
                     "is_recommended": is_rec,
+                    "cold_start": cold_start,
+                    "model_count": n_models,
+                    "model_names": ",".join(model_names),
+                    "used_default_line": bool(mkt.get("line_defaulted", False)),
+                    "used_default_counter_odds": bool(mkt.get("counter_defaulted", False)),
                     "exp_home_score": round(exp_h, 2),
                     "exp_away_score": round(exp_a, 2),
                     "rationale_bullets": rationale,
                 })
 
     return rows
+
+
+def _compute_quality_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compute data-quality and provenance coverage metrics for a slate."""
+    if not rows:
+        return {
+            "row_count": 0,
+            "game_count": 0,
+            "live_odds_rate": 0.0,
+            "default_line_rate": 0.0,
+            "default_counter_odds_rate": 0.0,
+            "unk_team_rows": 0,
+            "duplicate_rows": 0,
+            "missing_required_rows": 0,
+            "model_count": 0,
+        }
+
+    df = pd.DataFrame(rows)
+    required = [
+        "game",
+        "home_team",
+        "away_team",
+        "segment",
+        "market_type",
+        "pick",
+        "odds_current",
+        "model_prob",
+    ]
+    for col in required:
+        if col not in df.columns:
+            df[col] = pd.NA
+    missing_required_rows = int(df[required].isna().any(axis=1).sum())
+    duplicate_rows = int(
+        df.duplicated(subset=["game", "segment", "market_type", "pick"]).sum()
+    )
+    unk_team_rows = int(
+        ((df["home_team"] == "UNK") | (df["away_team"] == "UNK")).sum()
+    )
+
+    return {
+        "row_count": int(len(df)),
+        "game_count": int(df["game"].nunique()),
+        "live_odds_rate": float((df["odds_quality"] == "live").mean()),
+        "default_line_rate": float(df["used_default_line"].astype(bool).mean()),
+        "default_counter_odds_rate": float(
+            df["used_default_counter_odds"].astype(bool).mean()
+        ),
+        "unk_team_rows": unk_team_rows,
+        "duplicate_rows": duplicate_rows,
+        "missing_required_rows": missing_required_rows,
+        "model_count": int(df["model_count"].max()),
+    }
+
+
+def _run_quality_gates(metrics: dict[str, Any]) -> tuple[bool, list[dict[str, Any]]]:
+    """Evaluate hard publish gates for canonical slate output."""
+    gates = [
+        {
+            "name": "non_empty_output",
+            "passed": metrics["row_count"] > 0,
+            "value": metrics["row_count"],
+            "threshold": "> 0",
+        },
+        {
+            "name": "no_unknown_teams",
+            "passed": metrics["unk_team_rows"] == 0,
+            "value": metrics["unk_team_rows"],
+            "threshold": "== 0",
+        },
+        {
+            "name": "no_duplicate_market_rows",
+            "passed": metrics["duplicate_rows"] == 0,
+            "value": metrics["duplicate_rows"],
+            "threshold": "== 0",
+        },
+        {
+            "name": "required_fields_present",
+            "passed": metrics["missing_required_rows"] == 0,
+            "value": metrics["missing_required_rows"],
+            "threshold": "== 0",
+        },
+        {
+            "name": "live_odds_coverage",
+            "passed": metrics["live_odds_rate"] >= 0.95,
+            "value": round(metrics["live_odds_rate"], 4),
+            "threshold": ">= 0.95",
+        },
+        {
+            "name": "min_model_count",
+            "passed": metrics["model_count"] >= 2,
+            "value": metrics["model_count"],
+            "threshold": ">= 2",
+        },
+        {
+            "name": "default_line_rate_reasonable",
+            "passed": metrics["default_line_rate"] <= 0.60,
+            "value": round(metrics["default_line_rate"], 4),
+            "threshold": "<= 0.60",
+        },
+    ]
+    passed = all(g["passed"] for g in gates)
+    return passed, gates
+
+
+def _write_audit_artifact(path: Path, audit: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(audit, handle, indent=2, sort_keys=True)
 
 
 # ═════════════════════════════════════════════════════════════════════════
@@ -579,6 +743,8 @@ def main() -> None:
     args = parser.parse_args()
 
     today = args.date or datetime.now(tz=UTC).strftime("%Y-%m-%d")
+    run_id = f"slate-{today}-{uuid.uuid4().hex[:8]}"
+    generated_at_utc = datetime.now(tz=UTC).isoformat()
     logger.info("Generating MLB pick sheet for %s", today)
 
     # ── 1. Load config & today's odds ────────────────────────────────
@@ -657,21 +823,65 @@ def main() -> None:
         return
 
     # ── 4. Build pick rows ───────────────────────────────────────────
-    pick_rows = _build_pick_rows(model_input, model_results, today, cold_start=cold_start, features_X=features.X)
+    pick_rows = _build_pick_rows(
+        model_input,
+        model_results,
+        today,
+        run_id=run_id,
+        generated_at_utc=generated_at_utc,
+        source_provider="odds_api",
+        cold_start=cold_start,
+        features_X=features.X,
+    )
     logger.info("Generated %d pick rows across all games/segments/markets", len(pick_rows))
 
-    # ── 5. Write CSV ─────────────────────────────────────────────────
+    # ── 5. Quality gates + audit + canonical publish ─────────────────
+    quality_metrics = _compute_quality_metrics(pick_rows)
+    quality_passed, gates = _run_quality_gates(quality_metrics)
+    audit = {
+        "slate_date": today,
+        "run_id": run_id,
+        "generated_at_utc": generated_at_utc,
+        "source_provider": "odds_api",
+        "quality_passed": quality_passed,
+        "quality_metrics": quality_metrics,
+        "quality_gates": gates,
+        "row_count": len(pick_rows),
+        "game_count": len({row.get("game") for row in pick_rows}),
+        "model_names": sorted(model_results.keys()),
+        "cold_start": cold_start,
+    }
     out_dir = Path("artifacts")
+    audit_path = out_dir / f"data_audit_{today}.json"
+    _write_audit_artifact(audit_path, audit)
+
+    if not quality_passed:
+        failed = [g["name"] for g in gates if not g["passed"]]
+        raise RuntimeError(
+            "Slate quality gates failed: "
+            + ", ".join(failed)
+            + f" (see {audit_path})"
+        )
+
+    checksum = db.publish_slate(today, run_id, pick_rows, audit, status="published")
+    audit["checksum"] = checksum
+    _write_audit_artifact(audit_path, audit)
+    logger.info("Canonical slate published to DB for %s (checksum=%s)", today, checksum[:12])
+
+    # ── 6. Write CSV (derived artifact from canonical rows) ──────────
     out_dir.mkdir(exist_ok=True)
     csv_path = out_dir / f"picks_{today}.csv"
 
     fieldnames = [
-        "date", "game", "home_team", "away_team", "game_time",
+        "date", "run_id", "generated_at_utc", "source_provider", "source_event_id",
+        "game", "home_team", "away_team", "game_time",
         "segment", "market_type", "pick",
         "odds_current", "odds_quality", "line_move",
         "steam_flag", "rlm_flag", "bets_pct", "money_pct",
         "model_prob", "implied_prob", "no_vig_ev", "kelly", "confidence",
-        "is_recommended", "exp_home_score", "exp_away_score",
+        "is_recommended", "cold_start", "model_count", "model_names",
+        "used_default_line", "used_default_counter_odds",
+        "exp_home_score", "exp_away_score",
         "rationale_bullets",
     ]
 
@@ -682,7 +892,7 @@ def main() -> None:
 
     logger.info("Wrote %s (%d rows)", csv_path, len(pick_rows))
 
-    # ── 6. Console summary of recommended picks ─────────────────────
+    # ── 7. Console summary of recommended picks ─────────────────────
     recs = [r for r in pick_rows if r["is_recommended"]]
     logger.info("")
     logger.info("═" * 100)

@@ -232,6 +232,7 @@ class AppConfig:
                 "input_path": self.data.input_path,
                 "api_key": self.data.api_key,
                 "api_base_url": self.data.api_base_url,
+                "email": self.data.email,
             },
             "model": {
                 "type": self.model.type,
@@ -261,8 +262,10 @@ class AppConfig:
                 if "api_key" not in data:
                     # Try Key Vault first, fall back to env vars
                     env_key = _LOADER_API_KEY_MAP.get(loader, "")
-                    api_key = get_secret(
-                        env_key.lower().replace("_", "-"), env_key
+                    api_key = (
+                        get_secret(env_key.lower().replace("_", "-"), env_key)
+                        if env_key
+                        else ""
                     ) or os.getenv("MLB_API_KEY", "")
                     payload["data"]["api_key"] = api_key
                 if "api_base_url" not in data:
@@ -271,7 +274,9 @@ class AppConfig:
                         _LOADER_BASE_URL_MAP.get(loader, ""),
                     )
                 if "email" not in data and loader == "action_network":
-                    payload["data"]["email"] = os.getenv("MLB_EMAIL", "")
+                    payload["data"]["email"] = os.getenv("MLB_EMAIL") or os.getenv(
+                        _LOADER_API_KEY_MAP.get("action_network_email", ""), ""
+                    )
         if model:
             payload["model"].update(model)
         return AppConfig._from_dict(payload)
@@ -287,9 +292,9 @@ class AppConfig:
         loader = os.getenv("MLB_LOADER", "synthetic")
         # Resolve the correct API key for the selected loader using Key Vault or env vars.
         env_key = _LOADER_API_KEY_MAP.get(loader, "")
-        api_key = get_secret(env_key.lower().replace("_", "-"), env_key) or os.getenv(
-            "MLB_API_KEY", ""
-        )
+        api_key = (
+            get_secret(env_key.lower().replace("_", "-"), env_key) if env_key else ""
+        ) or os.getenv("MLB_API_KEY", "")
         api_base_url = os.getenv("MLB_API_BASE_URL") or _LOADER_BASE_URL_MAP.get(
             loader, ""
         )

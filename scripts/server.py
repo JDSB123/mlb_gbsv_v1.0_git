@@ -50,6 +50,12 @@ _last_trigger_monotonic = 0.0
 _tracking_db = TrackingDB(os.getenv("TRACKING_DB_PATH", "artifacts/tracking.db"))
 
 
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() == "true"
+
+
 def _is_trigger_authorized() -> tuple[bool, str | None]:
     """Validate trigger request auth based on environment configuration."""
     expected_key = os.getenv("TRIGGER_API_KEY", "").strip()
@@ -124,11 +130,19 @@ def fetch_picks() -> ResponseReturnValue:
         logger.exception("Pick sheet generation failed: %s", exc)
         return jsonify({"status": "error", "message": str(exc)}), 500
 
-    rows = _read_picks_csv(target_date)
+    rows = _read_published_slate(target_date)
     if not rows:
-        return jsonify({"status": "error", "message": "Pick sheet was not generated"}), 500
+        return (
+            jsonify(
+                {
+                    "status": "error",
+                    "message": "Canonical slate was not published for this date",
+                }
+            ),
+            500,
+        )
 
-    recs = [r for r in rows if r.get("is_recommended", "").lower() == "true"]
+    recs = [r for r in rows if _as_bool(r.get("is_recommended", False))]
     return (
         jsonify(
             {
@@ -174,15 +188,9 @@ def _run_pick_sheet(target_date: str) -> None:
         sys.argv = old_argv
 
 
-def _read_picks_csv(target_date: str) -> list[dict[str, str]]:
-    """Read the picks CSV for a date, returning list of dicts."""
-    import csv as csv_mod
-
-    csv_path = PROJECT_ROOT / "artifacts" / f"picks_{target_date}.csv"
-    if not csv_path.exists():
-        return []
-    with open(csv_path, encoding="utf-8") as f:
-        return list(csv_mod.DictReader(f))
+def _read_published_slate(target_date: str) -> list[dict[str, Any]]:
+    """Read canonical published slate rows from SQLite SSOT."""
+    return _tracking_db.get_published_slate(target_date)
 
 
 @app.route("/api/slate", methods=["GET"])
@@ -203,18 +211,18 @@ def api_slate() -> ResponseReturnValue:
             logger.exception("Slate refresh failed: %s", exc)
             return jsonify({"status": "error", "message": str(exc)}), 500
 
-    rows = _read_picks_csv(target_date)
-    recs = [r for r in rows if r.get("is_recommended", "").lower() == "true"]
+    rows = _read_published_slate(target_date)
+    recs = [r for r in rows if _as_bool(r.get("is_recommended", False))]
 
-    # Determine last-refreshed time from CSV file modification time (CT)
-    csv_path = PROJECT_ROOT / "artifacts" / f"picks_{target_date}.csv"
+    # Determine last-refreshed time from canonical manifest timestamp (CT)
     last_refreshed = None
-    if csv_path.exists():
-        mtime = os.path.getmtime(csv_path)
+    manifest = _tracking_db.get_slate_manifest(target_date)
+    if manifest and manifest.get("created_at"):
         ct = timezone(timedelta(hours=-6))
-        last_refreshed = datetime.fromtimestamp(mtime, tz=ct).strftime(
-            "%Y-%m-%d %I:%M %p CT"
-        )
+        manifest_dt = datetime.fromisoformat(str(manifest["created_at"]))
+        if manifest_dt.tzinfo is None:
+            manifest_dt = manifest_dt.replace(tzinfo=UTC)
+        last_refreshed = manifest_dt.astimezone(ct).strftime("%Y-%m-%d %I:%M %p CT")
 
     return (
         jsonify(
@@ -250,9 +258,17 @@ def api_slate_teams() -> ResponseReturnValue:
         )
 
     target_date = request.args.get("date", datetime.now(tz=UTC).strftime("%Y-%m-%d"))
-    rows = _read_picks_csv(target_date)
+    rows = _read_published_slate(target_date)
     if not rows:
-        return jsonify({"status": "error", "message": f"No picks found for {target_date}"}), 404
+        return (
+            jsonify(
+                {
+                    "status": "error",
+                    "message": f"No published canonical slate found for {target_date}",
+                }
+            ),
+            404,
+        )
 
     try:
         from mlbv1.alerts.teams import TeamsAlert

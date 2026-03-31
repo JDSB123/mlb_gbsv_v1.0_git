@@ -94,13 +94,17 @@ class BaseLoader:
         timeout: int = 30,
     ) -> Any:  # noqa: ANN401
         """GET/POST *url*, decode JSON.  Retries on transient failures."""
+        from mlbv1.observability import track_api_call
+
         last_exc: Exception | None = None
+        loader_name = cls.__name__
         for attempt in range(cls.MAX_RETRIES):
             req = urllib.request.Request(
                 url, headers=headers or {}, data=data, method=method
             )
             try:
                 with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    track_api_call(loader_name, "success")
                     return json.loads(resp.read().decode("utf-8"))
             except (
                 urllib.error.URLError,
@@ -108,6 +112,7 @@ class BaseLoader:
                 TimeoutError,
             ) as exc:
                 last_exc = exc
+                track_api_call(loader_name, "retry")
                 wait = cls.BACKOFF_BASE * (2**attempt)
                 logger.warning(
                     "HTTP attempt %d failed (%s), retrying in %.1fs",
@@ -116,6 +121,7 @@ class BaseLoader:
                     wait,
                 )
                 time.sleep(wait)
+        track_api_call(loader_name, "error")
         raise DataLoaderError(
             f"HTTP request failed after {cls.MAX_RETRIES} attempts: {last_exc}"
         )

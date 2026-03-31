@@ -55,6 +55,15 @@ class TestAppConfig:
         assert "features" in parsed
         assert "model" in parsed
 
+    def test_override_action_network_email_from_env(self, monkeypatch) -> None:
+        monkeypatch.setenv("MLB_LOADER", "odds_api")
+        monkeypatch.setenv("ACTION_NETWORK_EMAIL", "an@example.com")
+        monkeypatch.delenv("MLB_EMAIL", raising=False)
+
+        cfg = AppConfig.load()
+        overridden = cfg.override(data={"loader": "action_network"})
+        assert overridden.data.email == "an@example.com"
+
 
 class TestFeatureConfig:
     def test_defaults(self) -> None:

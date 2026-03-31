@@ -52,6 +52,17 @@ TEAM_ALIASES: dict[str, str] = {
     "SD Padres": "SDP",
     "TB Rays": "TBR",
     "KC Royals": "KCR",
+    "CWS": "CHW",
+    "KC": "KCR",
+    "SD": "SDP",
+    "SF": "SFG",
+    "TB": "TBR",
+    "WSN": "WSH",
+    "CHW": "CHW",
+    "KCR": "KCR",
+    "SDP": "SDP",
+    "SFG": "SFG",
+    "TBR": "TBR",
 }
 
 # Stadium metadata: (Latitude, Longitude, is_indoor)
@@ -95,10 +106,22 @@ def normalize_team(name: str) -> str:
         return "UNK"
 
     clean = name.strip()
+    upper = clean.upper()
+
+    alt_abbr = {
+        "CWS": "CHW",
+        "KC": "KCR",
+        "SD": "SDP",
+        "SF": "SFG",
+        "TB": "TBR",
+        "WSN": "WSH",
+    }
+    if upper in alt_abbr:
+        return alt_abbr[upper]
 
     # Check if already a valid abbr
-    if clean.upper() in ABBR_TO_TEAM:
-        return clean.upper()
+    if upper in ABBR_TO_TEAM:
+        return upper
 
     # Try direct map lookup (exact match)
     if clean in TEAM_MAP:

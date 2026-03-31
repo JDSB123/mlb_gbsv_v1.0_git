@@ -145,6 +145,46 @@ class TestTrackingDB:
         assert done["last_run_status"] == "success"
         assert done["last_run"] is not None
 
+    def test_publish_and_read_canonical_slate(self) -> None:
+        rows = [
+            {
+                "date": "2026-03-31",
+                "game": "BOS @ NYY",
+                "home_team": "NYY",
+                "away_team": "BOS",
+                "segment": "FG",
+                "market_type": "ML",
+                "pick": "NYY ML",
+                "odds_current": -120,
+                "is_recommended": True,
+            },
+            {
+                "date": "2026-03-31",
+                "game": "BOS @ NYY",
+                "home_team": "NYY",
+                "away_team": "BOS",
+                "segment": "FG",
+                "market_type": "Total",
+                "pick": "Over 8.5",
+                "odds_current": -110,
+                "is_recommended": False,
+            },
+        ]
+        manifest = {"quality_passed": True, "row_count": 2}
+
+        checksum = self.db.publish_slate("2026-03-31", "slate-test-1", rows, manifest)
+        assert isinstance(checksum, str)
+        assert len(checksum) == 64
+
+        published_rows = self.db.get_published_slate("2026-03-31")
+        assert len(published_rows) == 2
+        assert published_rows[0]["pick"] == "NYY ML"
+
+        fetched_manifest = self.db.get_slate_manifest("2026-03-31")
+        assert fetched_manifest is not None
+        assert fetched_manifest["run_id"] == "slate-test-1"
+        assert fetched_manifest["checksum"] == checksum
+
 
 class TestBankrollManager:
     """Tests for Kelly criterion bankroll management."""

@@ -24,7 +24,10 @@ import pandas as pd
 from mlbv1.alerts.manager import AlertManager
 from mlbv1.config import AppConfig
 from mlbv1.data.loader import (
+    ActionNetworkLoader,
     BetsAPILoader,
+    CSVLoader,
+    JSONLoader,
     MLBStatsAPILoader,
     OddsAPILoader,
     SyntheticDataLoader,
@@ -247,11 +250,10 @@ def _settle_yesterday(db: TrackingDB, config: AppConfig) -> None:
 
 
 def _generate_and_post_slate(target_date: str) -> None:
-    """Generate pick sheet CSV and post the Adaptive Card slate to Teams."""
-    import csv as csv_mod
+    """Generate/publish canonical slate and post the Adaptive Card to Teams."""
     import importlib.util
 
-    # Run pick_sheet.py to produce artifacts/picks_{date}.csv
+    # Run pick_sheet.py to generate and publish canonical slate output.
     spec = importlib.util.spec_from_file_location(
         "pick_sheet",
         Path(__file__).parent / "pick_sheet.py",
@@ -273,19 +275,14 @@ def _generate_and_post_slate(target_date: str) -> None:
         force=True,
     )
 
-    csv_path = Path(__file__).parent.parent / "artifacts" / f"picks_{target_date}.csv"
-    if not csv_path.exists():
-        logger.warning("Pick sheet CSV not found at %s — skipping slate post", csv_path)
-        return
-
-    with open(csv_path, encoding="utf-8") as f:
-        rows = list(csv_mod.DictReader(f))
+    db = TrackingDB(os.getenv("TRACKING_DB_PATH", "artifacts/tracking.db"))
+    rows = db.get_published_slate(target_date)
 
     if not rows:
-        logger.info("Pick sheet is empty — skipping slate post")
+        logger.info("No canonical slate rows found for %s — skipping slate post", target_date)
         return
 
-    logger.info("Pick sheet has %d rows for %s", len(rows), target_date)
+    logger.info("Canonical slate has %d rows for %s", len(rows), target_date)
 
     # Post to Teams if configured
     group_id = os.getenv("TEAMS_GROUP_ID", "")
@@ -331,7 +328,29 @@ def _load_training_data(config: AppConfig) -> pd.DataFrame:
 
     # Fallback to configured loader
     logger.info("Using fallback loader: %s", config.data.loader)
-    return SyntheticDataLoader(num_games=300).load()
+    try:
+        fallback_loader = _build_loader_from_config(config)
+        fallback_df = fallback_loader.load()
+        if len(fallback_df) >= 50:
+            return fallback_df
+        logger.warning(
+            "Configured fallback loader %s returned only %d rows",
+            config.data.loader,
+            len(fallback_df),
+        )
+    except Exception as exc:
+        logger.warning("Configured fallback loader failed: %s", exc)
+
+    allow_synth = os.getenv("ALLOW_SYNTHETIC_FALLBACK", "false").lower() == "true"
+    if allow_synth:
+        logger.warning(
+            "Falling back to synthetic training data because ALLOW_SYNTHETIC_FALLBACK=true"
+        )
+        return SyntheticDataLoader(num_games=300).load()
+
+    raise RuntimeError(
+        "Unable to load sufficient real training data and synthetic fallback is disabled."
+    )
 
 
 def _train_and_save(
@@ -427,7 +446,7 @@ def _load_todays_games(config: AppConfig) -> pd.DataFrame:
     if bets_key:
         try:
             loader_b = BetsAPILoader(
-                base_url="https://api.b365api.com",
+                base_url="https://api.betsapi.com",
                 api_key=bets_key,
             )
             df = loader_b.load()
@@ -436,10 +455,62 @@ def _load_todays_games(config: AppConfig) -> pd.DataFrame:
         except Exception as exc:
             logger.warning("BetsAPI failed: %s", exc)
 
-    logger.info("No live odds available — using synthetic for today")
-    return SyntheticDataLoader(
-        num_games=15, seed=int(datetime.now(tz=UTC).timestamp())
-    ).load()
+    # Try configured loader as a final real-data source.
+    try:
+        configured_loader = _build_loader_from_config(config)
+        df = configured_loader.load()
+        if not df.empty:
+            return df
+    except Exception as exc:
+        logger.warning("Configured today-loader failed: %s", exc)
+
+    allow_synth = os.getenv("ALLOW_SYNTHETIC_FALLBACK", "false").lower() == "true"
+    if allow_synth:
+        logger.warning(
+            "No live odds available — using synthetic because ALLOW_SYNTHETIC_FALLBACK=true"
+        )
+        return SyntheticDataLoader(
+            num_games=15, seed=int(datetime.now(tz=UTC).timestamp())
+        ).load()
+
+    logger.error(
+        "No live odds available and synthetic fallback is disabled. Returning empty frame."
+    )
+    return pd.DataFrame()
+
+
+def _build_loader_from_config(config: AppConfig):  # noqa: ANN201
+    """Build a loader from AppConfig for explicit fallback use."""
+    loader_name = str(config.data.loader).strip()
+    if loader_name == "synthetic":
+        return SyntheticDataLoader(num_games=300)
+    if loader_name == "odds_api":
+        return OddsAPILoader(
+            config.data.api_base_url or "https://api.the-odds-api.com/v4",
+            config.data.api_key or os.getenv("ODDS_API_KEY", ""),
+        )
+    if loader_name == "bets_api":
+        return BetsAPILoader(
+            config.data.api_base_url or "https://api.betsapi.com",
+            config.data.api_key or os.getenv("BETS_API_KEY", ""),
+        )
+    if loader_name == "action_network":
+        return ActionNetworkLoader(
+            config.data.api_base_url or "https://api.actionnetwork.com",
+            config.data.api_key or os.getenv("ACTION_NETWORK_PASSWORD", ""),
+            config.data.email or os.getenv("ACTION_NETWORK_EMAIL", ""),
+        )
+    if loader_name == "csv":
+        if not config.data.input_path:
+            raise ValueError("CSV loader requires data.input_path")
+        return CSVLoader(config.data.input_path)
+    if loader_name == "json":
+        if not config.data.input_path:
+            raise ValueError("JSON loader requires data.input_path")
+        return JSONLoader(config.data.input_path)
+    if loader_name == "mlb_stats":
+        return MLBStatsAPILoader(days_back=90)
+    raise ValueError(f"Unsupported loader in config: {loader_name}")
 
 
 def _predict_with_all_models(

@@ -16,6 +16,8 @@ MLBV1 is a multi-market MLB prediction pipeline using modular data ingestion, 27
 - **Ensemble** voting with optional weighting
 - **Evaluation** — accuracy, ROI, Sharpe ratio
 - **SQLite tracking** — predictions, settlement, bankroll, model registry
+- **Canonical slate SSOT** — validated slate rows are atomically published to SQLite (`published_slate`)
+- **Data quality gates + audit manifest** — run-level checks and `artifacts/data_audit_YYYY-MM-DD.json`
 - **Alerts** — Discord webhooks, email (SMTP)
 - **Docker + GitHub Actions CI**
 - **Azure deployment** via Bicep / `azd up`

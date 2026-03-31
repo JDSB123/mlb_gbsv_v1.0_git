@@ -33,12 +33,17 @@ class LahmanDataEnricher:
                 for y in range(2021, 2026):
                     with contextlib.suppress(Exception):
                         dfs.append(pitching_stats(y, qual=0))
+                if not dfs:
+                    return pd.DataFrame()
                 df = pd.concat(dfs, ignore_index=True)
 
-            # Rename columns to match expected format
-            df_renamed = df[["Name", "ERA", "W", "IP"]].copy()
-            df_renamed.columns = ["pitcher_name", "era", "wins", "innings_pitched"]
-            return pd.DataFrame(df_renamed.dropna(subset=["era"]))
+            keep = [col for col in ["Name", "ERA", "W", "IP", "IDfg"] if col in df.columns]
+            if not keep:
+                return pd.DataFrame()
+            out = df[keep].copy()
+            if "IDfg" not in out.columns:
+                out["IDfg"] = pd.NA
+            return pd.DataFrame(out.dropna(subset=["ERA"]))
         except ImportError:
             logger.warning("pybaseball not installed; skipping Lahman pitcher stats")
             return pd.DataFrame()
@@ -76,6 +81,14 @@ class LahmanDataEnricher:
             return games_df
 
         df = games_df.copy()
+        stats = pitcher_stats.copy()
+        # Accept either canonical pybaseball columns or previously renamed aliases.
+        if "ERA" not in stats.columns and "era" in stats.columns:
+            stats["ERA"] = pd.to_numeric(stats["era"], errors="coerce")
+        if "W" not in stats.columns and "wins" in stats.columns:
+            stats["W"] = pd.to_numeric(stats["wins"], errors="coerce")
+        if "Name" not in stats.columns and "pitcher_name" in stats.columns:
+            stats["Name"] = stats["pitcher_name"]
 
         # Try to use Chadwick crosswalk to map Fangraphs ID to MLBAM ID
         try:
@@ -84,19 +97,19 @@ class LahmanDataEnricher:
             chadwick_df = chadwick_register()
             # Map IDfg (Fangraphs) from pitcher_stats to key_mlbam
             # First ensure both exist
-            if "IDfg" in pitcher_stats.columns and not chadwick_df.empty:
+            if "IDfg" in stats.columns and not chadwick_df.empty:
                 crosswalk = chadwick_df[["key_fangraphs", "key_mlbam"]].dropna()
                 # key_fangraphs is often float because of NaNs, IDfg is int/str
                 crosswalk["key_fangraphs"] = pd.to_numeric(
                     crosswalk["key_fangraphs"], errors="coerce"
                 )
-                pitcher_stats["IDfg"] = pd.to_numeric(
-                    pitcher_stats["IDfg"], errors="coerce"
+                stats["IDfg"] = pd.to_numeric(
+                    stats["IDfg"], errors="coerce"
                 )
 
                 # Merge the crosswalk into the pitcher stats
                 p_stats_merged = pd.merge(
-                    pitcher_stats,
+                    stats,
                     crosswalk,
                     left_on="IDfg",
                     right_on="key_fangraphs",
@@ -151,6 +164,55 @@ class LahmanDataEnricher:
 
         except Exception as e:
             logger.warning(f"Chadwick crosswalk mapping failed: {e}")
+
+        # Fallback name-based merge if IDs were not available.
+        if "Name" in stats.columns and "ERA" in stats.columns and "W" in stats.columns:
+            name_stats = stats[["Name", "ERA", "W"]].dropna(subset=["Name"]).copy()
+            if "home_pitcher_name" in df.columns:
+                home_stats = name_stats.rename(
+                    columns={
+                        "Name": "home_pitcher_name",
+                        "ERA": "lahman_home_era",
+                        "W": "lahman_home_wins",
+                    }
+                )
+                df = pd.merge(df, home_stats, on="home_pitcher_name", how="left")
+                if "lahman_home_era" in df.columns:
+                    df["home_pitcher_era"] = pd.to_numeric(
+                        df["lahman_home_era"], errors="coerce"
+                    ).combine_first(pd.to_numeric(df.get("home_pitcher_era"), errors="coerce"))
+                if "lahman_home_wins" in df.columns:
+                    df["home_pitcher_wins"] = pd.to_numeric(
+                        df["lahman_home_wins"], errors="coerce"
+                    ).combine_first(pd.to_numeric(df.get("home_pitcher_wins"), errors="coerce"))
+                df.drop(
+                    columns=["lahman_home_era", "lahman_home_wins"],
+                    errors="ignore",
+                    inplace=True,
+                )
+
+            if "away_pitcher_name" in df.columns:
+                away_stats = name_stats.rename(
+                    columns={
+                        "Name": "away_pitcher_name",
+                        "ERA": "lahman_away_era",
+                        "W": "lahman_away_wins",
+                    }
+                )
+                df = pd.merge(df, away_stats, on="away_pitcher_name", how="left")
+                if "lahman_away_era" in df.columns:
+                    df["away_pitcher_era"] = pd.to_numeric(
+                        df["lahman_away_era"], errors="coerce"
+                    ).combine_first(pd.to_numeric(df.get("away_pitcher_era"), errors="coerce"))
+                if "lahman_away_wins" in df.columns:
+                    df["away_pitcher_wins"] = pd.to_numeric(
+                        df["lahman_away_wins"], errors="coerce"
+                    ).combine_first(pd.to_numeric(df.get("away_pitcher_wins"), errors="coerce"))
+                df.drop(
+                    columns=["lahman_away_era", "lahman_away_wins"],
+                    errors="ignore",
+                    inplace=True,
+                )
 
         # Fallback: For now, preserve existing pitcher ERA columns if they exist
         if "home_pitcher_era" not in df.columns:
