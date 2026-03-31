@@ -98,6 +98,29 @@ if (![string]::IsNullOrWhiteSpace($triggerApiKey)) {
     Write-Host "  ⚠️  TRIGGER_API_KEY not set; /trigger endpoint will remain disabled until configured." -ForegroundColor Yellow
 }
 
+# Teams channel config (Graph API posting from ACA)
+$teamsGroupId = [Environment]::GetEnvironmentVariable("TEAMS_GROUP_ID", "Process")
+$teamsChannelId = [Environment]::GetEnvironmentVariable("TEAMS_CHANNEL_ID", "Process")
+if (![string]::IsNullOrWhiteSpace($teamsGroupId) -and ![string]::IsNullOrWhiteSpace($teamsChannelId)) {
+    $deployParams += "--parameters"
+    $deployParams += "teamsGroupId=$teamsGroupId"
+    $deployParams += "--parameters"
+    $deployParams += "teamsChannelId=$teamsChannelId"
+    Write-Host "  ✅ Teams channel config will be deployed" -ForegroundColor Green
+} else {
+    Write-Host "  ⚠️  TEAMS_GROUP_ID / TEAMS_CHANNEL_ID not set; Teams posting disabled." -ForegroundColor Yellow
+}
+
+# Teams webhook URL (fallback/primary for ACA — Graph API is delegated-only)
+$teamsWebhookUrl = [Environment]::GetEnvironmentVariable("TEAMS_WEBHOOK_URL", "Process")
+if (![string]::IsNullOrWhiteSpace($teamsWebhookUrl)) {
+    $deployParams += "--parameters"
+    $deployParams += "teamsWebhookUrl=$teamsWebhookUrl"
+    Write-Host "  ✅ Teams webhook URL will be deployed" -ForegroundColor Green
+} else {
+    Write-Host "  ⚠️  TEAMS_WEBHOOK_URL not set; set this for Teams posting from ACA." -ForegroundColor Yellow
+}
+
 Write-Host "  Deploying Azure resources (this may take 5-10 minutes)..." -ForegroundColor Yellow
 $deployment = az deployment group create @deployParams --output json 2>&1 | ConvertFrom-Json
 if ($LASTEXITCODE -ne 0) {

@@ -44,3 +44,5 @@ data/
 !src/mlbv1/data/
 !src/mlbv1/data/*.py
 logs/
+infra/main.json
+pipeline_output.log

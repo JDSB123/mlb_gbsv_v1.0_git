@@ -9,6 +9,10 @@ param sqlAdminPassword string = newGuid()
 param triggerApiKey string = ''
 param allowUnauthTrigger bool = false
 param containerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+param teamsGroupId string = ''
+param teamsChannelId string = ''
+@secure()
+param teamsWebhookUrl string = ''
 
 var acrName = replace('${namePrefix}-acr', '-', '')
 var storageName = replace('${namePrefix}-sto', '-', '')
@@ -21,6 +25,8 @@ var sqlServerName = replace('${namePrefix}-sql', '-', '')
 var sqlDbName = 'mlb-tracking'
 var kvSecretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
 var hasTriggerApiKey = !empty(triggerApiKey)
+var hasTeamsConfig = !empty(teamsGroupId) && !empty(teamsChannelId)
+var hasTeamsWebhook = !empty(teamsWebhookUrl)
 
 resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
   name: acrName
@@ -192,6 +198,14 @@ resource acaApp 'Microsoft.App/containerApps@2023-05-01' = {
                 value: triggerApiKey
               }
             ]
+          : [],
+        hasTeamsWebhook
+          ? [
+              {
+                name: 'teams-webhook-url'
+                value: teamsWebhookUrl
+              }
+            ]
           : []
       )
     }
@@ -228,6 +242,26 @@ resource acaApp 'Microsoft.App/containerApps@2023-05-01' = {
                   {
                     name: 'TRIGGER_API_KEY'
                     secretRef: 'trigger-api-key'
+                  }
+                ]
+              : [],
+            hasTeamsConfig
+              ? [
+                  {
+                    name: 'TEAMS_GROUP_ID'
+                    value: teamsGroupId
+                  }
+                  {
+                    name: 'TEAMS_CHANNEL_ID'
+                    value: teamsChannelId
+                  }
+                ]
+              : [],
+            hasTeamsWebhook
+              ? [
+                  {
+                    name: 'TEAMS_WEBHOOK_URL'
+                    secretRef: 'teams-webhook-url'
                   }
                 ]
               : []

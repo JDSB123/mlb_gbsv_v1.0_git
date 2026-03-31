@@ -1,9 +1,10 @@
 """Microsoft Teams integration for MLB pick slate posting.
 
 Supports two modes:
-    1. **Graph API** (preferred, zero-config): Uses `az account get-access-token`
-       to post Adaptive Cards directly to a Teams channel.
-       Requires: TEAMS_GROUP_ID + TEAMS_CHANNEL_ID in .env (or auto-detected).
+    1. **Graph API** (preferred, zero-config): Uses DefaultAzureCredential
+       (managed identity in ACA, az CLI locally) to post Adaptive Cards
+       directly to a Teams channel.
+       Requires: TEAMS_GROUP_ID + TEAMS_CHANNEL_ID in .env.
     2. **Webhook** (fallback): Posts via Power Automate Workflow webhook.
        Requires: TEAMS_WEBHOOK_URL in .env.
 """
@@ -22,16 +23,34 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _IS_WINDOWS = sys.platform == "win32"
+_GRAPH_SCOPE = "https://graph.microsoft.com/.default"
 
 
 def _get_graph_token() -> str | None:
-    """Obtain a Microsoft Graph token via az CLI (cached credentials)."""
+    """Obtain a Microsoft Graph token.
+
+    Tries (in order):
+    1. azure.identity.DefaultAzureCredential (managed identity in ACA, az CLI locally)
+    2. az CLI subprocess fallback
+    """
+    # Try DefaultAzureCredential first (works in ACA + local)
+    try:
+        from azure.identity import DefaultAzureCredential
+
+        credential = DefaultAzureCredential()
+        token = credential.get_token(_GRAPH_SCOPE)
+        if token and token.token:
+            return token.token
+    except Exception as exc:
+        logger.debug("DefaultAzureCredential failed: %s", exc)
+
+    # Fallback: az CLI subprocess (local dev)
     try:
         result = subprocess.run(
             ["az", "account", "get-access-token", "--resource",
              "https://graph.microsoft.com", "--query", "accessToken", "-o", "tsv"],
             capture_output=True, text=True, timeout=15,
-            shell=_IS_WINDOWS,  # az.cmd needs shell on Windows
+            shell=_IS_WINDOWS,
         )
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip()
@@ -402,18 +421,23 @@ class TeamsAlert:
     # ── HTTP post ────────────────────────────────────────────────────
 
     def _post(self, payload: dict[str, Any]) -> bool:
-        """Post to Teams — tries Graph API first, falls back to webhook."""
-        # Try Graph API if we have group/channel IDs
+        """Post to Teams — tries webhook first (reliable from managed identity),
+        then Graph API as fallback."""
+        # Prefer webhook (works from managed identity / application context)
+        if self.webhook_url:
+            logger.info("Posting to Teams via webhook")
+            if self._post_webhook(payload):
+                return True
+            logger.warning("Webhook post failed, trying Graph API fallback")
+
+        # Graph API fallback (requires delegated permissions for channel messages)
         if self.group_id and self.channel_id:
+            logger.info("Posting to Teams via Graph API")
             if self._post_graph(payload):
                 return True
-            logger.warning("Graph API post failed, trying webhook fallback")
+            logger.warning("Graph API post also failed")
 
-        # Webhook fallback
-        if self.webhook_url:
-            return self._post_webhook(payload)
-
-        logger.error("No Teams posting method available")
+        logger.error("No Teams posting method succeeded")
         return False
 
     def _post_graph(self, payload: dict[str, Any]) -> bool:
