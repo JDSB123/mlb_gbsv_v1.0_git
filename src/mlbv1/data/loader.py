@@ -282,39 +282,25 @@ class OddsAPILoader(BaseLoader):
             markets = _extract_all_markets(item)
             home_team = normalize_team(item.get("home_team", ""))
             away_team = normalize_team(item.get("away_team", ""))
-            records.append(
-                {
-                    "game_date": item.get("commence_time"),
-                    "home_team": home_team,
-                    "away_team": away_team,
-                    "home_score": (
-                        item.get("scores", [{}])[0].get("score", 0)
-                        if item.get("scores")
-                        else 0
-                    ),
-                    "away_score": (
-                        item.get("scores", [{}])[1].get("score", 0)
-                        if item.get("scores") and len(item.get("scores", [])) > 1
-                        else 0
-                    ),
-                    "spread": markets.get("spread", 0.0),
-                    "home_moneyline": markets.get("home_moneyline", -110),
-                    "away_moneyline": markets.get("away_moneyline", -110),
-                    "total_runs": markets.get("total_runs", 0.0),
-                    "over_odds": markets.get("over_odds", -110),
-                    "under_odds": markets.get("under_odds", -110),
-                    "f5_spread": markets.get("f5_spread", 0.0),
-                    "f5_home_moneyline": markets.get("f5_home_moneyline", -110),
-                    "f5_away_moneyline": markets.get("f5_away_moneyline", -110),
-                    "f5_total_runs": markets.get("f5_total_runs", 0.0),
-                    "f5_over_odds": markets.get("f5_over_odds", -110),
-                    "f5_under_odds": markets.get("f5_under_odds", -110),
-                    "home_spread_odds": markets.get("home_spread_odds", -110),
-                    "away_spread_odds": markets.get("away_spread_odds", -110),
-                    "f5_home_spread_odds": markets.get("f5_home_spread_odds", -110),
-                    "f5_away_spread_odds": markets.get("f5_away_spread_odds", -110),
-                }
-            )
+            # Pass through all market fields as-is (NaN if missing).
+            # No -110 defaults — downstream must handle NaN explicitly.
+            record: dict[str, Any] = {
+                "game_date": item.get("commence_time"),
+                "home_team": home_team,
+                "away_team": away_team,
+                "home_score": (
+                    item.get("scores", [{}])[0].get("score", 0)
+                    if item.get("scores")
+                    else 0
+                ),
+                "away_score": (
+                    item.get("scores", [{}])[1].get("score", 0)
+                    if item.get("scores") and len(item.get("scores", [])) > 1
+                    else 0
+                ),
+            }
+            record.update(markets)
+            records.append(record)
         df = pd.DataFrame.from_records(records)
         if df.empty:
             return self._validate(_empty_df())
@@ -831,25 +817,18 @@ def _empty_df() -> pd.DataFrame:
 
 
 def _extract_all_markets(item: dict[str, Any]) -> dict[str, float]:
-    """Extract full game and F5 markets: ML, spread, totals."""
-    res = {
-        "spread": 0.0,
-        "home_spread_odds": -110.0,
-        "away_spread_odds": -110.0,
-        "home_moneyline": -110.0,
-        "away_moneyline": -110.0,
-        "total_runs": 0.0,
-        "over_odds": -110.0,
-        "under_odds": -110.0,
-        "f5_spread": 0.0,
-        "f5_home_spread_odds": -110.0,
-        "f5_away_spread_odds": -110.0,
-        "f5_home_moneyline": -110.0,
-        "f5_away_moneyline": -110.0,
-        "f5_total_runs": 0.0,
-        "f5_over_odds": -110.0,
-        "f5_under_odds": -110.0,
-    }
+    """Extract full game and F5 markets: ML, spread, totals.
+
+    Averages odds across ALL bookmakers for consensus pricing rather than
+    using a single arbitrary book.  Lines (spread points, total points) use
+    the mode (most common value) since these are identical across most books.
+    """
+    # Collect all values per field across bookmakers for averaging.
+    from collections import defaultdict
+
+    _odds_accum: dict[str, list[float]] = defaultdict(list)
+    _line_accum: dict[str, list[float]] = defaultdict(list)
+
     home = item.get("home_team")
     away = item.get("away_team")
 
@@ -860,83 +839,112 @@ def _extract_all_markets(item: dict[str, Any]) -> dict[str, float]:
 
             if mkey == "spreads":
                 for o in outcomes:
+                    if "price" not in o:
+                        continue
                     if o.get("name") == home:
-                        res["spread"] = float(o.get("point", res["spread"]))
-                        res["home_spread_odds"] = float(o.get("price", -110))
+                        _line_accum["spread"].append(float(o["point"]))
+                        _odds_accum["home_spread_odds"].append(float(o["price"]))
                     elif o.get("name") == away:
-                        res["away_spread_odds"] = float(o.get("price", -110))
+                        _odds_accum["away_spread_odds"].append(float(o["price"]))
             elif mkey == "h2h":
                 for o in outcomes:
-                    price = float(o.get("price", -110))
+                    if "price" not in o:
+                        continue
                     if o.get("name") == home:
-                        res["home_moneyline"] = price
+                        _odds_accum["home_moneyline"].append(float(o["price"]))
                     elif o.get("name") == away:
-                        res["away_moneyline"] = price
+                        _odds_accum["away_moneyline"].append(float(o["price"]))
             elif mkey == "totals":
                 for o in outcomes:
-                    res["total_runs"] = float(o.get("point", res["total_runs"]))
+                    if "price" not in o:
+                        continue
+                    _line_accum["total_runs"].append(float(o.get("point", 0)))
                     if str(o.get("name", "")).lower() == "over":
-                        res["over_odds"] = float(o.get("price", -110))
+                        _odds_accum["over_odds"].append(float(o["price"]))
                     elif str(o.get("name", "")).lower() == "under":
-                        res["under_odds"] = float(o.get("price", -110))
+                        _odds_accum["under_odds"].append(float(o["price"]))
 
             # F5 markets
             elif mkey in {"spreads_1st_half", "spreads_1st_5_innings"}:
                 for o in outcomes:
+                    if "price" not in o:
+                        continue
                     if o.get("name") == home:
-                        res["f5_spread"] = float(o.get("point", res["f5_spread"]))
-                        res["f5_home_spread_odds"] = float(o.get("price", -110))
+                        _line_accum["f5_spread"].append(float(o["point"]))
+                        _odds_accum["f5_home_spread_odds"].append(float(o["price"]))
                     elif o.get("name") == away:
-                        res["f5_away_spread_odds"] = float(o.get("price", -110))
+                        _odds_accum["f5_away_spread_odds"].append(float(o["price"]))
             elif mkey in {"h2h_1st_half", "h2h_1st_5_innings"}:
                 for o in outcomes:
-                    price = float(o.get("price", -110))
+                    if "price" not in o:
+                        continue
                     if o.get("name") == home:
-                        res["f5_home_moneyline"] = price
+                        _odds_accum["f5_home_moneyline"].append(float(o["price"]))
                     elif o.get("name") == away:
-                        res["f5_away_moneyline"] = price
+                        _odds_accum["f5_away_moneyline"].append(float(o["price"]))
             elif mkey in {"totals_1st_half", "totals_1st_5_innings"}:
                 for o in outcomes:
-                    res["f5_total_runs"] = float(o.get("point", res["f5_total_runs"]))
+                    if "price" not in o:
+                        continue
+                    _line_accum["f5_total_runs"].append(float(o.get("point", 0)))
                     if str(o.get("name", "")).lower() == "over":
-                        res["f5_over_odds"] = float(o.get("price", -110))
+                        _odds_accum["f5_over_odds"].append(float(o["price"]))
                     elif str(o.get("name", "")).lower() == "under":
-                        res["f5_under_odds"] = float(o.get("price", -110))
+                        _odds_accum["f5_under_odds"].append(float(o["price"]))
 
-    return res
+    # Build result: consensus average for odds, mode for lines, NaN if no data.
+    def _american_to_prob(odds: float) -> float:
+        """Convert American odds to implied probability."""
+        if odds < 0:
+            return -odds / (-odds + 100)
+        elif odds > 0:
+            return 100 / (odds + 100)
+        return 0.5  # even money
 
+    def _prob_to_american(prob: float) -> int:
+        """Convert implied probability back to American odds."""
+        if prob <= 0 or prob >= 1:
+            return -10000 if prob >= 1 else 10000
+        if prob > 0.5:
+            return round(-(prob / (1 - prob)) * 100)
+        elif prob < 0.5:
+            return round(((1 - prob) / prob) * 100)
+        return 100  # even money
 
-def _extract_spread(item: dict[str, Any]) -> float:
-    """Extract the home spread from an OddsAPI v4 bookmakers payload."""
-    for bm in item.get("bookmakers", []):
-        for market in bm.get("markets", []):
-            if market.get("key") == "spreads":
-                for outcome in market.get("outcomes", []):
-                    if outcome.get("name") == item.get("home_team"):
-                        return float(outcome.get("point", 0.0))
-    return 0.0
+    def _avg(vals: list[float]) -> float:
+        """Consensus odds: average in probability space, convert back."""
+        if not vals:
+            return float("nan")
+        avg_prob = sum(_american_to_prob(v) for v in vals) / len(vals)
+        return float(_prob_to_american(avg_prob))
 
+    def _mode(vals: list[float]) -> float:
+        if not vals:
+            return float("nan")
+        from statistics import mode as _stat_mode
+        try:
+            return _stat_mode(vals)
+        except Exception:
+            return vals[0]
 
-def _extract_h2h_moneylines(item: dict[str, Any]) -> tuple[int, int]:
-    """Extract (home_moneyline, away_moneyline) from OddsAPI v4 h2h market."""
-    home_ml, away_ml = -110, -110
-    for bm in item.get("bookmakers", []):
-        for market in bm.get("markets", []):
-            if market.get("key") == "h2h":
-                for outcome in market.get("outcomes", []):
-                    price = int(outcome.get("price", -110))
-                    if outcome.get("name") == item.get("home_team"):
-                        home_ml = price
-                    elif outcome.get("name") == item.get("away_team"):
-                        away_ml = price
-                return home_ml, away_ml
-    return home_ml, away_ml
-
-
-def _extract_moneyline(item: dict[str, Any], side: str) -> int:
-    """Legacy helper kept for backward compat."""
-    moneylines = item.get("moneyline") or {}
-    return int(moneylines.get(side, -110))
+    return {
+        "spread": _mode(_line_accum["spread"]) if _line_accum["spread"] else 0.0,
+        "home_spread_odds": _avg(_odds_accum["home_spread_odds"]),
+        "away_spread_odds": _avg(_odds_accum["away_spread_odds"]),
+        "home_moneyline": _avg(_odds_accum["home_moneyline"]),
+        "away_moneyline": _avg(_odds_accum["away_moneyline"]),
+        "total_runs": _mode(_line_accum["total_runs"]) if _line_accum["total_runs"] else 0.0,
+        "over_odds": _avg(_odds_accum["over_odds"]),
+        "under_odds": _avg(_odds_accum["under_odds"]),
+        "f5_spread": _mode(_line_accum["f5_spread"]) if _line_accum["f5_spread"] else 0.0,
+        "f5_home_spread_odds": _avg(_odds_accum["f5_home_spread_odds"]),
+        "f5_away_spread_odds": _avg(_odds_accum["f5_away_spread_odds"]),
+        "f5_home_moneyline": _avg(_odds_accum["f5_home_moneyline"]),
+        "f5_away_moneyline": _avg(_odds_accum["f5_away_moneyline"]),
+        "f5_total_runs": _mode(_line_accum["f5_total_runs"]) if _line_accum["f5_total_runs"] else 0.0,
+        "f5_over_odds": _avg(_odds_accum["f5_over_odds"]),
+        "f5_under_odds": _avg(_odds_accum["f5_under_odds"]),
+    }
 
 
 def _merge_odds_payloads(

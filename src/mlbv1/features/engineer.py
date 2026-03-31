@@ -243,10 +243,25 @@ def engineer_features(
         "f5_total_runs",
         "f5_over_odds",
         "f5_under_odds",
+        "home_spread_odds",
+        "away_spread_odds",
+        "f5_home_spread_odds",
+        "f5_away_spread_odds",
     ]
     feature_cols.extend([c for c in optional_line_cols if c in data.columns])
 
-    data[feature_cols] = data[feature_cols].fillna(0.0)
+    # Fill missing values: odds columns get -110 (standard vig), others get 0.
+    _odds_cols = {
+        "home_moneyline", "away_moneyline", "over_odds", "under_odds",
+        "f5_home_moneyline", "f5_away_moneyline", "f5_over_odds", "f5_under_odds",
+        "home_spread_odds", "away_spread_odds",
+        "f5_home_spread_odds", "f5_away_spread_odds",
+    }
+    for col in feature_cols:
+        if col in _odds_cols:
+            data[col] = data[col].fillna(-110.0)
+        else:
+            data[col] = data[col].fillna(0.0)
     X = data[feature_cols].astype(float)
     return FeatureSet(X=X, feature_names=feature_cols)
 

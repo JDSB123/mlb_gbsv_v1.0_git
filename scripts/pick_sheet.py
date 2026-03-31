@@ -66,16 +66,14 @@ def _implied_prob(odds: float) -> float:
     return 0.5
 
 
-def _no_vig_prob(home_odds: float, away_odds: float, side: str) -> float:
-    """Remove the vig and return the 'true' implied probability for *side*."""
-    p_home = _implied_prob(home_odds)
-    p_away = _implied_prob(away_odds)
-    total = p_home + p_away
+def _no_vig_prob(side_odds: float, other_odds: float) -> float:
+    """Remove the vig and return the 'true' implied probability for the side bet."""
+    p_side = _implied_prob(side_odds)
+    p_other = _implied_prob(other_odds)
+    total = p_side + p_other
     if total == 0:
         return 0.5
-    if side == "home":
-        return p_home / total
-    return p_away / total
+    return p_side / total
 
 
 def _no_vig_ev(model_prob: float, decimal_odds: float) -> float:
@@ -90,20 +88,6 @@ def _kelly_fraction(model_prob: float, decimal_odds: float) -> float:
         return 0.0
     f = (model_prob * b - (1 - model_prob)) / b
     return max(0.0, f)
-
-
-def _best_odds_for_game(rows: list[dict], key: str) -> dict[str, float]:
-    """Return the best (most favorable) odds across multiple bookmaker rows."""
-    best: dict[str, float] = {}
-    for r in rows:
-        val = r.get(key, -110)
-        try:
-            v = float(val)
-        except (TypeError, ValueError):
-            continue
-        if key not in best or _american_to_decimal(v) > _american_to_decimal(best[key]):
-            best[key] = v
-    return best
 
 
 # ═════════════════════════════════════════════════════════════════════════
@@ -162,24 +146,46 @@ def _build_pick_rows(
         avg: dict[str, float] = {k: np.mean(v) for k, v in prob_accum.items()}
 
         # ── FG Market Data ───────────────────────────────────────────
-        fg_spread = float(game.get("spread", -1.5))
-        fg_home_spread_odds = float(game.get("home_spread_odds", -110))
-        fg_away_spread_odds = float(game.get("away_spread_odds", -110))
-        fg_home_ml = float(game.get("home_moneyline", -110))
-        fg_away_ml = float(game.get("away_moneyline", -110))
-        fg_total = float(game.get("total_runs", 8.5))
-        fg_over_odds = float(game.get("over_odds", -110))
-        fg_under_odds = float(game.get("under_odds", -110))
+        # Use NaN-aware reads: if API didn't return data, the field is NaN.
+        def _odds(val: Any, fallback: float = float("nan")) -> float:
+            try:
+                v = float(val)
+                if pd.isna(v):
+                    return fallback
+                return v
+            except (TypeError, ValueError):
+                return fallback
+
+        fg_spread = _odds(game.get("spread"), -1.5)
+        fg_home_spread_odds = _odds(game.get("home_spread_odds"))
+        fg_away_spread_odds = _odds(game.get("away_spread_odds"))
+        fg_home_ml = _odds(game.get("home_moneyline"))
+        fg_away_ml = _odds(game.get("away_moneyline"))
+        fg_total = _odds(game.get("total_runs"), 8.5)
+        fg_over_odds = _odds(game.get("over_odds"))
+        fg_under_odds = _odds(game.get("under_odds"))
+
+        # FG odds quality: "live" if we have real ML odds, else "no_odds"
+        fg_has_odds = not (pd.isna(fg_home_ml) and pd.isna(fg_away_ml))
 
         # F5 Market Data
-        f5_spread = float(game.get("f5_spread", 0.0))
-        f5_home_spread_odds = float(game.get("f5_home_spread_odds", -110))
-        f5_away_spread_odds = float(game.get("f5_away_spread_odds", -110))
-        f5_home_ml = float(game.get("f5_home_moneyline", -110))
-        f5_away_ml = float(game.get("f5_away_moneyline", -110))
-        f5_total = float(game.get("f5_total_runs", 0.0))
-        f5_over_odds = float(game.get("f5_over_odds", -110))
-        f5_under_odds = float(game.get("f5_under_odds", -110))
+        f5_spread = _odds(game.get("f5_spread"), 0.0)
+        f5_home_spread_odds = _odds(game.get("f5_home_spread_odds"))
+        f5_away_spread_odds = _odds(game.get("f5_away_spread_odds"))
+        f5_home_ml = _odds(game.get("f5_home_moneyline"))
+        f5_away_ml = _odds(game.get("f5_away_moneyline"))
+        f5_total = _odds(game.get("f5_total_runs"), 0.0)
+        f5_over_odds = _odds(game.get("f5_over_odds"))
+        f5_under_odds = _odds(game.get("f5_under_odds"))
+
+        # F5 quality: "live" if ANY F5 odds field is a real number
+        f5_has_data = any(
+            not pd.isna(v) for v in [
+                f5_home_ml, f5_away_ml, f5_over_odds, f5_under_odds,
+                f5_home_spread_odds, f5_away_spread_odds,
+            ]
+        )
+        f5_odds_quality = "live" if f5_has_data else "synthetic"
 
         # Expected runs from models
         exp_fg_home = avg.get("exp_home_score", 4.0)
@@ -188,137 +194,118 @@ def _build_pick_rows(
         exp_f5_away = avg.get("exp_f5_away_score", 2.0)
 
         # ── Define all markets ───────────────────────────────────────
+        # Only include markets where we have REAL odds from a sportsbook.
+        # No Team Totals — no API provides TT odds/lines.
         segments = []
 
         # ── FG (Full Game) ───────────────────────────────────────────
-        segments.append({
-            "segment": "FG",
-            "markets": [
-                {
-                    "market_type": "Spread",
-                    "pick": f"{home} {fg_spread:+.1f}",
-                    "odds_current": fg_home_spread_odds,
-                    "model_prob": avg.get("home_spread_cover_prob", 0.5),
-                    "counter_odds": fg_away_spread_odds,
-                    "line": fg_spread,
-                },
-                {
-                    "market_type": "ML",
-                    "pick": f"{home} ML",
-                    "odds_current": fg_home_ml,
-                    "model_prob": avg.get("home_ml_prob", 0.5),
-                    "counter_odds": fg_away_ml,
-                    "line": None,
-                },
-                {
-                    "market_type": "ML",
-                    "pick": f"{away} ML",
-                    "odds_current": fg_away_ml,
-                    "model_prob": avg.get("away_ml_prob", 0.5),
-                    "counter_odds": fg_home_ml,
-                    "line": None,
-                },
-                {
-                    "market_type": "Total",
-                    "pick": f"Over {fg_total}",
-                    "odds_current": fg_over_odds,
-                    "model_prob": avg.get("over_total_prob", 0.5),
-                    "counter_odds": fg_under_odds,
-                    "line": fg_total,
-                },
-                {
-                    "market_type": "Total",
-                    "pick": f"Under {fg_total}",
-                    "odds_current": fg_under_odds,
-                    "model_prob": 1.0 - avg.get("over_total_prob", 0.5),
-                    "counter_odds": fg_over_odds,
-                    "line": fg_total,
-                },
-                {
-                    "market_type": "Team Total",
-                    "pick": f"{home} Over {exp_fg_home:.1f}",
-                    "odds_current": -110,  # standard TT pricing
-                    "model_prob": avg.get("home_tt_over_prob", 0.5),
-                    "counter_odds": -110,
-                    "line": round(exp_fg_home * 2) / 2,  # nearest 0.5
-                },
-                {
-                    "market_type": "Team Total",
-                    "pick": f"{away} Over {exp_fg_away:.1f}",
-                    "odds_current": -110,
-                    "model_prob": avg.get("away_tt_over_prob", 0.5),
-                    "counter_odds": -110,
-                    "line": round(exp_fg_away * 2) / 2,
-                },
-            ],
-        })
+        fg_markets: list[dict[str, Any]] = []
+
+        if not pd.isna(fg_home_spread_odds):
+            fg_markets.append({
+                "market_type": "Spread",
+                "pick": f"{home} {fg_spread:+.1f}",
+                "odds_current": fg_home_spread_odds,
+                "model_prob": avg.get("home_spread_cover_prob", 0.5),
+                "counter_odds": fg_away_spread_odds if not pd.isna(fg_away_spread_odds) else fg_home_spread_odds,
+                "line": fg_spread,
+            })
+
+        if not pd.isna(fg_home_ml):
+            fg_markets.append({
+                "market_type": "ML",
+                "pick": f"{home} ML",
+                "odds_current": fg_home_ml,
+                "model_prob": avg.get("home_ml_prob", 0.5),
+                "counter_odds": fg_away_ml if not pd.isna(fg_away_ml) else fg_home_ml,
+                "line": None,
+            })
+        if not pd.isna(fg_away_ml):
+            fg_markets.append({
+                "market_type": "ML",
+                "pick": f"{away} ML",
+                "odds_current": fg_away_ml,
+                "model_prob": avg.get("away_ml_prob", 0.5),
+                "counter_odds": fg_home_ml if not pd.isna(fg_home_ml) else fg_away_ml,
+                "line": None,
+            })
+
+        if not pd.isna(fg_over_odds):
+            fg_markets.append({
+                "market_type": "Total",
+                "pick": f"Over {fg_total}",
+                "odds_current": fg_over_odds,
+                "model_prob": avg.get("over_total_prob", 0.5),
+                "counter_odds": fg_under_odds if not pd.isna(fg_under_odds) else fg_over_odds,
+                "line": fg_total,
+            })
+        if not pd.isna(fg_under_odds):
+            fg_markets.append({
+                "market_type": "Total",
+                "pick": f"Under {fg_total}",
+                "odds_current": fg_under_odds,
+                "model_prob": 1.0 - avg.get("over_total_prob", 0.5),
+                "counter_odds": fg_over_odds if not pd.isna(fg_over_odds) else fg_under_odds,
+                "line": fg_total,
+            })
+
+        if fg_markets:
+            segments.append({"segment": "FG", "markets": fg_markets})
 
         # ── F5 (First 5 Innings) ────────────────────────────────────
-        f5_has_data = f5_total > 0 or f5_spread != 0 or f5_home_ml != -110
-        f5_spread_display = f5_spread if f5_spread != 0 else -0.5  # default F5 spread
-        f5_odds_quality = "live" if f5_has_data else "synthetic"
+        f5_markets: list[dict[str, Any]] = []
+        f5_spread_display = f5_spread if f5_spread != 0 else -0.5
 
-        segments.append({
-            "segment": "F5",
-            "markets": [
-                {
-                    "market_type": "Spread",
-                    "pick": f"{home} {f5_spread_display:+.1f}",
-                    "odds_current": f5_home_spread_odds,
-                    "model_prob": avg.get("f5_home_spread_cover_prob", 0.5),
-                    "counter_odds": f5_away_spread_odds,
-                    "line": f5_spread_display,
-                },
-                {
-                    "market_type": "ML",
-                    "pick": f"{home} F5 ML",
-                    "odds_current": f5_home_ml,
-                    "model_prob": avg.get("f5_home_ml_prob", 0.5),
-                    "counter_odds": f5_away_ml,
-                    "line": None,
-                },
-                {
-                    "market_type": "ML",
-                    "pick": f"{away} F5 ML",
-                    "odds_current": f5_away_ml,
-                    "model_prob": avg.get("f5_away_ml_prob", 0.5),
-                    "counter_odds": f5_home_ml,
-                    "line": None,
-                },
-                {
-                    "market_type": "Total",
-                    "pick": f"F5 Over {f5_total if f5_total > 0 else 4.5}",
-                    "odds_current": f5_over_odds,
-                    "model_prob": avg.get("f5_over_total_prob", 0.5),
-                    "counter_odds": f5_under_odds,
-                    "line": f5_total if f5_total > 0 else 4.5,
-                },
-                {
-                    "market_type": "Total",
-                    "pick": f"F5 Under {f5_total if f5_total > 0 else 4.5}",
-                    "odds_current": f5_under_odds,
-                    "model_prob": 1.0 - avg.get("f5_over_total_prob", 0.5),
-                    "counter_odds": f5_over_odds,
-                    "line": f5_total if f5_total > 0 else 4.5,
-                },
-                {
-                    "market_type": "Team Total",
-                    "pick": f"{home} F5 Over {exp_f5_home:.1f}",
-                    "odds_current": -110,
-                    "model_prob": avg.get("f5_home_tt_over_prob", 0.5),
-                    "counter_odds": -110,
-                    "line": round(exp_f5_home * 2) / 2,
-                },
-                {
-                    "market_type": "Team Total",
-                    "pick": f"{away} F5 Over {exp_f5_away:.1f}",
-                    "odds_current": -110,
-                    "model_prob": avg.get("f5_away_tt_over_prob", 0.5),
-                    "counter_odds": -110,
-                    "line": round(exp_f5_away * 2) / 2,
-                },
-            ],
-        })
+        if not pd.isna(f5_home_spread_odds):
+            f5_markets.append({
+                "market_type": "Spread",
+                "pick": f"{home} {f5_spread_display:+.1f}",
+                "odds_current": f5_home_spread_odds,
+                "model_prob": avg.get("f5_home_spread_cover_prob", 0.5),
+                "counter_odds": f5_away_spread_odds if not pd.isna(f5_away_spread_odds) else f5_home_spread_odds,
+                "line": f5_spread_display,
+            })
+
+        if not pd.isna(f5_home_ml):
+            f5_markets.append({
+                "market_type": "ML",
+                "pick": f"{home} F5 ML",
+                "odds_current": f5_home_ml,
+                "model_prob": avg.get("f5_home_ml_prob", 0.5),
+                "counter_odds": f5_away_ml if not pd.isna(f5_away_ml) else f5_home_ml,
+                "line": None,
+            })
+        if not pd.isna(f5_away_ml):
+            f5_markets.append({
+                "market_type": "ML",
+                "pick": f"{away} F5 ML",
+                "odds_current": f5_away_ml,
+                "model_prob": avg.get("f5_away_ml_prob", 0.5),
+                "counter_odds": f5_home_ml if not pd.isna(f5_home_ml) else f5_away_ml,
+                "line": None,
+            })
+
+        if not pd.isna(f5_over_odds):
+            f5_markets.append({
+                "market_type": "Total",
+                "pick": f"F5 Over {f5_total if f5_total > 0 else 4.5}",
+                "odds_current": f5_over_odds,
+                "model_prob": avg.get("f5_over_total_prob", 0.5),
+                "counter_odds": f5_under_odds if not pd.isna(f5_under_odds) else f5_over_odds,
+                "line": f5_total if f5_total > 0 else 4.5,
+            })
+        if not pd.isna(f5_under_odds):
+            f5_markets.append({
+                "market_type": "Total",
+                "pick": f"F5 Under {f5_total if f5_total > 0 else 4.5}",
+                "odds_current": f5_under_odds,
+                "model_prob": 1.0 - avg.get("f5_over_total_prob", 0.5),
+                "counter_odds": f5_over_odds if not pd.isna(f5_over_odds) else f5_under_odds,
+                "line": f5_total if f5_total > 0 else 4.5,
+            })
+
+        if f5_markets:
+            segments.append({"segment": "F5", "markets": f5_markets})
 
         # ── Emit rows ───────────────────────────────────────────────
         for seg in segments:
@@ -328,35 +315,27 @@ def _build_pick_rows(
                 dec_odds = _american_to_decimal(odds_cur)
                 model_p = mkt["model_prob"]
 
-                nv_prob = _no_vig_prob(
-                    odds_cur if "home" in mkt["pick"].lower() or "over" in mkt["pick"].lower() else counter,
-                    counter if "home" in mkt["pick"].lower() or "over" in mkt["pick"].lower() else odds_cur,
-                    "home",
-                )
+                # No-vig probability: pass the picked side's odds first
+                nv_prob = _no_vig_prob(odds_cur, counter)
                 ev = _no_vig_ev(model_p, dec_odds)
                 kelly = _kelly_fraction(model_p, dec_odds)
                 confidence = min(1.0, kelly * 4)  # scale kelly to 0-1
 
-                # Odds quality: live (real API data), synthetic (defaults/model-derived)
+                # Odds quality
                 if seg["segment"] == "F5":
                     quality = f5_odds_quality
-                elif mkt["market_type"] == "Team Total":
-                    quality = "model"  # team total lines are model-derived
                 else:
-                    quality = "live"
+                    quality = "live" if fg_has_odds else "no_odds"
 
                 # Recommendation: require real odds for full confidence
                 #   live odds:  EV > 3% AND model_prob > 52%
-                #   model odds: EV > 5% AND model_prob > 55%
-                #   synthetic:  never recommend (no real line to bet against)
+                #   no_odds/synthetic: never recommend (no real line to bet against)
                 #   cold_start: never recommend (features are mostly defaults)
                 if cold_start:
                     is_rec = False
                 elif quality == "live":
                     is_rec = ev > 0.03 and model_p > 0.52
-                elif quality == "model":
-                    is_rec = ev > 0.05 and model_p > 0.55
-                else:  # synthetic
+                else:  # synthetic / no_odds
                     is_rec = False
 
                 # In cold start, discount confidence by 50%
