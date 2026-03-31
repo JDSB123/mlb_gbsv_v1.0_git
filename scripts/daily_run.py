@@ -13,8 +13,10 @@ import argparse
 import json
 import logging
 import os
+import sys
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -187,6 +189,11 @@ def main() -> None:
             roi_summary["current_balance"] = bankroll.balance
             alerts.send_daily_summary(roi_summary, top_picks=recommendations[:5])
 
+        # Step 8: Generate pick sheet & post slate card to Teams
+        logger.info("=== Step 8: Pick sheet & Teams slate ===")
+        today_str = datetime.now(tz=UTC).strftime("%Y-%m-%d")
+        _generate_and_post_slate(today_str)
+
         logger.info("=== Daily pipeline complete: %s ===", run_id)
 
     except Exception as exc:
@@ -222,6 +229,72 @@ def _settle_yesterday(db: TrackingDB, config: AppConfig) -> None:
             logger.info("No ODDS_API_KEY — skipping settlement")
     except Exception as exc:
         logger.warning("Settlement failed: %s", exc)
+
+
+def _generate_and_post_slate(target_date: str) -> None:
+    """Generate pick sheet CSV and post the Adaptive Card slate to Teams."""
+    import csv as csv_mod
+    import importlib.util
+
+    # Run pick_sheet.py to produce artifacts/picks_{date}.csv
+    spec = importlib.util.spec_from_file_location(
+        "pick_sheet",
+        Path(__file__).parent / "pick_sheet.py",
+    )
+    if spec and spec.loader:
+        pick_module = importlib.util.module_from_spec(spec)
+        old_argv = sys.argv[:]
+        try:
+            sys.argv = ["pick_sheet.py", "--date", target_date]
+            spec.loader.exec_module(pick_module)
+            pick_module.main()
+        finally:
+            sys.argv = old_argv
+
+    # pick_sheet reconfigures logging — restore ours
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        force=True,
+    )
+
+    csv_path = Path(__file__).parent.parent / "artifacts" / f"picks_{target_date}.csv"
+    if not csv_path.exists():
+        logger.warning("Pick sheet CSV not found at %s — skipping slate post", csv_path)
+        return
+
+    with open(csv_path, encoding="utf-8") as f:
+        rows = list(csv_mod.DictReader(f))
+
+    if not rows:
+        logger.info("Pick sheet is empty — skipping slate post")
+        return
+
+    logger.info("Pick sheet has %d rows for %s", len(rows), target_date)
+
+    # Post to Teams if configured
+    group_id = os.getenv("TEAMS_GROUP_ID", "")
+    channel_id = os.getenv("TEAMS_CHANNEL_ID", "")
+    webhook_url = os.getenv("TEAMS_WEBHOOK_URL", "")
+    if not (group_id and channel_id) and not webhook_url:
+        logger.info("Teams not configured — skipping slate post")
+        return
+
+    try:
+        from mlbv1.alerts.teams import TeamsAlert
+
+        alert = TeamsAlert(
+            webhook_url=webhook_url,
+            group_id=group_id,
+            channel_id=channel_id,
+        )
+        ok = alert.send_slate(rows, target_date)
+        if ok:
+            logger.info("Slate card posted to Teams ✓")
+        else:
+            logger.warning("Slate card post to Teams returned failure")
+    except Exception as exc:
+        logger.warning("Failed to post slate to Teams: %s", exc)
 
 
 def _load_training_data(config: AppConfig) -> pd.DataFrame:
