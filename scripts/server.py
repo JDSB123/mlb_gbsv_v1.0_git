@@ -17,7 +17,7 @@ import sys
 import threading
 import time
 from contextlib import suppress
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -205,6 +205,17 @@ def api_slate() -> ResponseReturnValue:
 
     rows = _read_picks_csv(target_date)
     recs = [r for r in rows if r.get("is_recommended", "").lower() == "true"]
+
+    # Determine last-refreshed time from CSV file modification time (CT)
+    csv_path = PROJECT_ROOT / "artifacts" / f"picks_{target_date}.csv"
+    last_refreshed = None
+    if csv_path.exists():
+        mtime = os.path.getmtime(csv_path)
+        ct = timezone(timedelta(hours=-6))
+        last_refreshed = datetime.fromtimestamp(mtime, tz=ct).strftime(
+            "%Y-%m-%d %I:%M %p CT"
+        )
+
     return (
         jsonify(
             {
@@ -212,6 +223,7 @@ def api_slate() -> ResponseReturnValue:
                 "date": target_date,
                 "total_picks": len(rows),
                 "recommended": len(recs),
+                "last_refreshed": last_refreshed,
                 "picks": rows,
             }
         ),

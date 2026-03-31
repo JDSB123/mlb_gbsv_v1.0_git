@@ -1,371 +1,392 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>GBSV MLB Slate</title>
-    <link href="https://unpkg.com/tabulator-tables@6.3/dist/css/tabulator_midnight.min.css" rel="stylesheet">
-    <style>
-        :root {
-            --bg-primary: #0d1117;
-            --bg-secondary: #161b22;
-            --bg-tertiary: #21262d;
-            --border: #30363d;
-            --text-primary: #f0f6fc;
-            --text-secondary: #c9d1d9;
-            --text-muted: #8b949e;
-            --accent: #58a6ff;
-            --green: #3fb950;
-            --green-bg: #0f2d1a;
-            --amber: #e3b341;
-            --red: #f85149;
-            --purple: #d2a8ff;
-        }
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-            background: var(--bg-primary);
-            color: var(--text-secondary);
-            min-height: 100vh;
-            -webkit-font-smoothing: antialiased;
-        }
-
-        /* ── Header ──────────────────────────────────────────── */
-        .header {
-            background: var(--bg-secondary);
-            border-bottom: 1px solid var(--border);
-            padding: 16px 20px;
-            position: sticky; top: 0; z-index: 100;
-        }
-        .header h1 {
-            font-size: 1.4rem; color: var(--accent);
-            display: flex; align-items: center; gap: 8px;
-        }
-        .header .sub { font-size: 0.82rem; color: var(--text-muted); margin-top: 2px; }
-
-        /* ── Stats Bar ───────────────────────────────────────── */
-        .stats-bar {
-            display: flex; gap: 10px; flex-wrap: wrap;
-            padding: 12px 20px;
-            background: var(--bg-secondary);
-            border-bottom: 1px solid var(--bg-tertiary);
-        }
-        .stat {
-            background: var(--bg-tertiary); border-radius: 8px;
-            padding: 10px 16px; flex: 1; min-width: 85px; text-align: center;
-        }
-        .stat .val {
-            font-size: 1.35rem; font-weight: 700; color: var(--text-primary);
-        }
-        .stat .lbl {
-            font-size: 0.65rem; text-transform: uppercase;
-            color: var(--text-muted); letter-spacing: 0.5px;
-        }
-        .stat.green .val { color: var(--green); }
-
-        /* ── Controls ────────────────────────────────────────── */
-        .controls {
-            display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
-            padding: 10px 20px;
-        }
-        .fbtn {
-            background: var(--bg-tertiary); color: var(--text-secondary);
-            border: 1px solid var(--border); padding: 6px 14px;
-            border-radius: 6px; cursor: pointer; font-size: 0.82rem;
-            transition: all 0.12s; user-select: none;
-        }
-        .fbtn:hover { background: var(--border); }
-        .fbtn.active { background: #1f6feb; border-color: #1f6feb; color: #fff; }
-        .act-btn {
-            border: none; padding: 8px 16px; border-radius: 6px;
-            cursor: pointer; font-size: 0.82rem; font-weight: 600;
-            margin-left: auto; transition: background 0.12s; color: #fff;
-        }
-        .act-btn:disabled { background: var(--bg-tertiary); cursor: not-allowed; color: var(--text-muted); }
-        .refresh-btn { background: #238636; }
-        .refresh-btn:hover:not(:disabled) { background: #2ea043; }
-        .teams-btn { background: #5b5fc7; margin-left: 6px; }
-        .teams-btn:hover:not(:disabled) { background: #7b7fc7; }
-        .spinner {
-            display: inline-block; width: 14px; height: 14px;
-            border: 2px solid #ffffff40; border-top-color: #fff;
-            border-radius: 50%; animation: spin 0.6s linear infinite;
-            margin-right: 6px; vertical-align: middle;
-        }
-        @keyframes spin { to { transform: rotate(360deg); } }
-
-        /* ── Table Container ─────────────────────────────────── */
-        #table-wrap { padding: 0 20px 20px; }
-
-        /* ── Tabulator Overrides ──────────────────────────────── */
-        .tabulator { background: var(--bg-primary); border: 1px solid var(--border); border-radius: 8px; font-size: 0.85rem; }
-        .tabulator .tabulator-header { background: var(--bg-secondary); border-bottom: 2px solid var(--border); }
-        .tabulator .tabulator-col { background: var(--bg-secondary); border-right: 1px solid var(--bg-tertiary); }
-        .tabulator .tabulator-col-title { color: var(--text-muted); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.4px; }
-        .tabulator .tabulator-col.tabulator-sortable .tabulator-col-title { padding-right: 18px; }
-        .tabulator-row { border-bottom: 1px solid var(--bg-tertiary) !important; }
-        .tabulator-row:hover { background: var(--bg-secondary) !important; }
-        .tabulator-row.rec-row { background: var(--green-bg) !important; border-left: 3px solid var(--green) !important; }
-        .tabulator-row.rec-row:hover { background: #133d22 !important; }
-        .tabulator-row .tabulator-cell { color: var(--text-secondary); padding: 8px 10px; border-right: none !important; }
-        .tabulator .tabulator-footer { background: var(--bg-secondary); border-top: 1px solid var(--border); color: var(--text-muted); }
-        .tabulator .tabulator-footer .tabulator-page { color: var(--text-secondary); background: var(--bg-tertiary); border: 1px solid var(--border); }
-        .tabulator .tabulator-footer .tabulator-page.active { background: #1f6feb; color: #fff; border-color: #1f6feb; }
-
-        /* ── Custom Cell Styles ───────────────────────────────── */
-        .ev-pos { color: var(--green); font-weight: 600; }
-        .ev-mid { color: var(--amber); }
-        .ev-neg { color: var(--red); }
-        .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.68rem; font-weight: 600; text-transform: uppercase; }
-        .b-rec { background: #238636; color: #fff; }
-        .b-fg { background: #1f6feb22; color: var(--accent); border: 1px solid #1f6feb; }
-        .b-f5 { background: #a371f722; color: var(--purple); border: 1px solid #a371f7; }
-        .stars { color: var(--amber); letter-spacing: 1px; font-size: 0.8rem; }
-
-        /* ── Loading Overlay ──────────────────────────────────── */
-        .overlay {
-            position: fixed; inset: 0; background: #0d1117ee;
-            display: flex; flex-direction: column; align-items: center; justify-content: center;
-            z-index: 1000;
-        }
-        .big-spin { width: 48px; height: 48px; border: 4px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; margin-bottom: 16px; }
-        .overlay p { color: var(--text-muted); font-size: 1rem; }
-
-        /* ── Toast ────────────────────────────────────────────── */
-        .toast {
-            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
-            background: var(--bg-tertiary); color: var(--text-secondary);
-            padding: 12px 24px; border-radius: 8px; border: 1px solid var(--border);
-            z-index: 1001; font-size: 0.88rem; opacity: 0; transition: opacity 0.3s;
-            max-width: 90vw; text-align: center;
-        }
-        .toast.show { opacity: 1; }
-        .toast.error { border-color: var(--red); }
-        .toast.success { border-color: var(--green); }
-
-        /* ── Empty State ─────────────────────────────────────── */
-        .empty {
-            text-align: center; padding: 60px 20px; color: var(--text-muted);
-        }
-        .empty h2 { font-size: 1.3rem; color: var(--text-secondary); margin-bottom: 8px; }
-        .empty p { margin-bottom: 20px; }
-
-        /* ── Mobile ───────────────────────────────────────────── */
-        @media (max-width: 768px) {
-            .header h1 { font-size: 1.15rem; }
-            .stats-bar { gap: 6px; padding: 8px 12px; }
-            .stat { padding: 8px; min-width: 70px; }
-            .stat .val { font-size: 1.1rem; }
-            .controls { padding: 8px 12px; gap: 4px; }
-            .fbtn { padding: 5px 10px; font-size: 0.78rem; }
-            .act-btn { padding: 7px 12px; font-size: 0.78rem; }
-            #table-wrap { padding: 0 8px 16px; }
-        }
-        @media (max-width: 480px) {
-            .controls { flex-wrap: wrap; }
-            .act-btn { margin-left: 0; flex: 1; text-align: center; }
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GBSV MLB Daily Slate</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;background:#f8f9fa;color:#1a2332;min-height:100vh}
+a{color:#2563eb;text-decoration:none}
+/* Header */
+.hdr{padding:12px 20px;background:#fff;border-bottom:1px solid #dee2e6}
+.hdr-title{font-size:20px;font-weight:700;color:#1a2332}
+.hdr-date{font-size:13px;color:#6b7280}
+.hdr-meta{font-size:12px;color:#6b7280}
+/* Filters */
+#filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center;padding:10px 20px}
+#filters select,#filters input{padding:6px 10px;border:1px solid #dee2e6;border-radius:6px;font-size:13px;background:#fff;color:#1a2332;cursor:pointer}
+#filters input{width:100px}
+.rst-btn{padding:6px 14px;border:none;border-radius:6px;background:#1a2332;color:#d4af37;font-weight:600;font-size:12px;cursor:pointer;letter-spacing:.5px}
+.rst-btn:hover{background:#2d3748}
+.act-btn{padding:6px 14px;border:none;border-radius:6px;font-weight:600;font-size:12px;cursor:pointer;letter-spacing:.5px;color:#fff}
+.refresh-btn{background:#238636;margin-left:auto}.refresh-btn:hover{background:#2ea043}
+.spinner{display:inline-block;width:12px;height:12px;border:2px solid #ffffff40;border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;margin-right:4px}
+@keyframes spin{to{transform:rotate(360deg)}}
+/* Table */
+table#slate{width:100%;border-collapse:collapse;border:1px solid #dee2e6;margin:0 auto}
+#slate th{background:#1a2332;color:#d4af37;font-weight:600;font-size:11px;letter-spacing:1px;text-transform:uppercase;padding:8px 6px;text-align:left;white-space:nowrap;cursor:pointer;user-select:none}
+#slate td{padding:6px;border-bottom:1px solid #e9ecef;font-size:13px;vertical-align:middle}
+#slate tbody tr:hover{background:#eef2ff!important}
+.sort-arrow{margin-left:4px;font-size:10px}
+/* Seg badges */
+.seg-badge{padding:2px 6px;border-radius:4px;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+.seg-fg{background:rgba(52,168,83,.15);color:#34a853;border:1px solid rgba(52,168,83,.3)}
+.seg-f5{background:rgba(66,133,244,.15);color:#4285f4;border:1px solid rgba(66,133,244,.3)}
+/* Market */
+.mkt{font-weight:600;color:#374151;font-size:12px}
+/* Pick cell */
+.pick-odds{font-size:12px;font-weight:700;color:#dc2626;background:rgba(0,0,0,.04);padding:1px 4px;border-radius:3px}
+.pick-rationale{font-size:11px;color:#6b7280;font-style:italic;margin-top:2px}
+/* Edge colors */
+.edge-green{color:#16a34a}.edge-amber{color:#ca8a04}.edge-red{color:#dc2626}
+/* Heat */
+.heat-pill{padding:2px 6px;border-radius:4px;font-weight:700;font-size:13px}
+.heat-4{background:#dcfce7;color:#15803d}
+.heat-3{background:#fef9c3;color:#854d0e}
+.heat-2{background:#fee2e2;color:#991b1b}
+.heat-1{background:#f3f4f6;color:#6b7280}
+/* Rec star */
+.rec-star{color:#d4af37;font-size:14px;margin-right:2px}
+/* Footer */
+.footer{text-align:center;padding:8px;color:#9ca3af;font-size:11px}
+/* Responsive */
+@media(max-width:768px){
+    #filters{flex-direction:column}
+    #slate{font-size:11px}
+    #slate th,#slate td{padding:4px 3px}
+    .hdr{padding:10px 12px}
+}
+/* Loading */
+#loading{text-align:center;padding:60px 20px;color:#6b7280;font-size:14px}
+#error-msg{text-align:center;padding:20px;color:#dc2626;font-size:14px;display:none}
+.container{max-width:1400px;margin:0 auto;padding:0 8px}
+</style>
 </head>
 <body>
+<div class="container">
 
-<div class="header">
-    <h1>⚾ GBSV MLB Slate</h1>
-    <div class="sub" id="hdr-sub">Loading...</div>
+<div class="hdr">
+    <div class="hdr-title">&#9918; MLB Daily Slate</div>
+    <div class="hdr-date" id="slateDate">Loading...</div>
+    <div class="hdr-meta" id="slateMeta"></div>
 </div>
 
-<div class="stats-bar">
-    <div class="stat"><div class="val" id="s-games">—</div><div class="lbl">Games</div></div>
-    <div class="stat"><div class="val" id="s-picks">—</div><div class="lbl">Total Picks</div></div>
-    <div class="stat green"><div class="val" id="s-recs">—</div><div class="lbl">Recommended</div></div>
-    <div class="stat"><div class="val" id="s-ev">—</div><div class="lbl">Best EV</div></div>
+<div id="filters">
+    <select id="fMatchup" onchange="applyFilters()"><option value="">All Matchups</option></select>
+    <select id="fSeg" onchange="applyFilters()">
+        <option value="">All Segments</option>
+        <option value="FG">FG</option>
+        <option value="F5">F5</option>
+    </select>
+    <select id="fMkt" onchange="applyFilters()">
+        <option value="">All Markets</option>
+        <option value="ML">ML</option>
+        <option value="Spread">Spread</option>
+        <option value="Total">Total</option>
+        <option value="Team Total">Team Total</option>
+    </select>
+    <input id="fEdge" type="number" step="0.5" min="0" placeholder="Min EV %" oninput="applyFilters()">
+    <select id="fRec" onchange="applyFilters()">
+        <option value="">All Picks</option>
+        <option value="yes">Recommended Only</option>
+    </select>
+    <button class="rst-btn" onclick="resetFilters()">RESET</button>
+    <button class="act-btn refresh-btn" id="refreshBtn" onclick="refreshOdds()">&#10227; Refresh Odds</button>
 </div>
 
-<div class="controls">
-    <button class="fbtn active" data-f="all">All</button>
-    <button class="fbtn" data-f="rec">★ Recommended</button>
-    <button class="fbtn" data-f="FG">FG</button>
-    <button class="fbtn" data-f="F5">F5</button>
-    <button class="act-btn refresh-btn" id="btn-refresh" onclick="doRefresh()">🔄 Fetch Fresh Odds</button>
-    <button class="act-btn teams-btn" id="btn-teams" onclick="postToTeams()" title="Post slate to Teams channel">📢 Post to Teams</button>
+<div id="loading">Loading slate data...</div>
+<div id="error-msg"></div>
+
+<table id="slate" style="display:none">
+<thead>
+<tr>
+    <th onclick="sortTable(0,'text')" data-col="0">Time CT<span class="sort-arrow">&#9650;&#9660;</span></th>
+    <th onclick="sortTable(1,'text')" data-col="1">Matchup<span class="sort-arrow">&#9650;&#9660;</span></th>
+    <th onclick="sortTable(2,'text')" data-col="2">Seg<span class="sort-arrow">&#9650;&#9660;</span></th>
+    <th onclick="sortTable(3,'text')" data-col="3">Market<span class="sort-arrow">&#9650;&#9660;</span></th>
+    <th onclick="sortTable(4,'text')" data-col="4">Pick<span class="sort-arrow">&#9650;&#9660;</span></th>
+    <th onclick="sortTable(5,'text')" data-col="5">Model<span class="sort-arrow">&#9650;&#9660;</span></th>
+    <th onclick="sortTable(6,'num')" data-col="6" style="text-align:center">EV%<span class="sort-arrow">&#9650;&#9660;</span></th>
+    <th onclick="sortTable(7,'num')" data-col="7" style="text-align:center">Rating<span class="sort-arrow">&#9650;&#9660;</span></th>
+</tr>
+</thead>
+<tbody id="slateBody"></tbody>
+</table>
+
+<div class="footer" id="slateFooter"></div>
+
 </div>
 
-<div id="table-wrap">
-    <div id="picks-table"></div>
-</div>
-
-<div class="overlay" id="overlay" style="display:none">
-    <div class="big-spin"></div>
-    <p id="overlay-msg">Fetching fresh odds...</p>
-</div>
-
-<div class="toast" id="toast"></div>
-
-<script src="https://unpkg.com/tabulator-tables@6.3/dist/js/tabulator.min.js"></script>
 <script>
-/* ── Globals ──────────────────────────────────────────────────────── */
-let table = null;
-let allData = [];
-const qs = new URLSearchParams(location.search);
-const dateQ = qs.get('date') || '';
+var _data=[];
+var _sortCol=6;
+var _sortAsc=false;
 
-document.addEventListener('DOMContentLoaded', () => {
-    setupFilters();
-    loadSlate();
-});
+function getDateParam(){
+    var p=new URLSearchParams(window.location.search);
+    return p.get('date')||'';
+}
 
-/* ── Filters ─────────────────────────────────────────────────────── */
-function setupFilters() {
-    document.querySelectorAll('.fbtn').forEach(b => {
-        b.addEventListener('click', () => {
-            document.querySelectorAll('.fbtn').forEach(x => x.classList.remove('active'));
-            b.classList.add('active');
-            applyFilter(b.dataset.f);
+function formatTimeCT(raw){
+    if(!raw||raw==='nan')return '\u2014';
+    try{
+        var d=new Date(raw);
+        if(isNaN(d.getTime()))return raw;
+        var ct=new Date(d.getTime()-(6*60*60*1000));
+        var yr=ct.getUTCFullYear();
+        var mo=String(ct.getUTCMonth()+1).padStart(2,'0');
+        var day=String(ct.getUTCDate()).padStart(2,'0');
+        var hr=ct.getUTCHours();
+        var mn=String(ct.getUTCMinutes()).padStart(2,'0');
+        var ampm=hr>=12?'PM':'AM';
+        hr=hr%12||12;
+        return yr+'-'+mo+'-'+day+' '+hr+':'+mn+' '+ampm+' CT';
+    }catch(e){return raw;}
+}
+
+function evPct(val){
+    var v=parseFloat(val);
+    if(isNaN(v))return 0;
+    return +(v*100).toFixed(1);
+}
+
+function heatRating(ev){
+    var v=parseFloat(ev);
+    if(isNaN(v))return{n:0,emoji:'',cls:'heat-1'};
+    var pct=v*100;
+    if(pct>=8) return{n:4,emoji:'\uD83D\uDD25\uD83D\uDD25\uD83D\uDD25\uD83D\uDD25',cls:'heat-4'};
+    if(pct>=5) return{n:3,emoji:'\uD83D\uDD25\uD83D\uDD25\uD83D\uDD25',cls:'heat-3'};
+    if(pct>=3) return{n:2,emoji:'\uD83D\uDD25\uD83D\uDD25',cls:'heat-2'};
+    return{n:1,emoji:'\uD83D\uDD25',cls:'heat-1'};
+}
+
+function edgeColor(pct){
+    if(pct>=5)return 'edge-green';
+    if(pct>=3)return 'edge-amber';
+    return 'edge-red';
+}
+
+function segBadge(seg){
+    var cls=seg==='FG'?'seg-fg':'seg-f5';
+    return '<span class="seg-badge '+cls+'">'+seg+'</span>';
+}
+
+function buildPickCell(row){
+    var rec=(row.is_recommended==='True'||row.is_recommended==='true'||row.is_recommended===true);
+    var star=rec?'<span class="rec-star">\u2605</span>':'';
+    var odds=parseInt(row.odds_current);
+    var oddsStr=odds>=0?'+'+odds:''+odds;
+    var borderColor=rec?'#16a34a':'#9ca3af';
+
+    var html='<div style="border-left:3px solid '+borderColor+';padding-left:6px;font-weight:700">'+
+        star+row.pick+' <span class="pick-odds">('+oddsStr+')</span>';
+
+    var rationale=row.rationale_bullets||'';
+    if(rationale){
+        var parts=rationale.split(' | ');
+        var modelPart='';
+        for(var i=0;i<parts.length;i++){
+            if(parts[i].indexOf('Model:')>=0||parts[i].indexOf('\uD83E\uDD16')>=0){
+                modelPart=parts[i].replace(/\uD83E\uDD16\s*Model:\s*/,'');
+                break;
+            }
+        }
+        if(modelPart){
+            html+='<div class="pick-rationale">'+modelPart+'</div>';
+        }
+    }
+    html+='</div>';
+    return html;
+}
+
+function buildModelCell(row){
+    var eh=parseFloat(row.exp_home_score)||0;
+    var ea=parseFloat(row.exp_away_score)||0;
+    if(eh===0&&ea===0)return '\u2014';
+    return '<span style="font-weight:600">'+
+        row.home_team+' '+eh.toFixed(1)+', '+
+        row.away_team+' '+ea.toFixed(1)+'</span>';
+}
+
+function buildRow(row){
+    var ev=evPct(row.no_vig_ev);
+    var heat=heatRating(row.no_vig_ev);
+    var matchup='<span style="color:#2563eb">'+row.away_team+'</span> @ '+
+        '<span style="color:#16a34a;font-weight:700">'+row.home_team+'</span>';
+    var rec=(row.is_recommended==='True'||row.is_recommended==='true'||row.is_recommended===true);
+
+    var tr=document.createElement('tr');
+    tr.dataset.matchup=row.game;
+    tr.dataset.seg=row.segment;
+    tr.dataset.mkt=row.market_type;
+    tr.dataset.edge=ev.toFixed(1);
+    tr.dataset.rec=rec?'yes':'no';
+    tr.dataset.time=row.game_time||'';
+    tr.dataset.rating=heat.n;
+
+    tr.innerHTML=
+        '<td>'+formatTimeCT(row.game_time)+'</td>'+
+        '<td>'+matchup+'</td>'+
+        '<td>'+segBadge(row.segment)+'</td>'+
+        '<td><span class="mkt">'+row.market_type.toUpperCase()+'</span></td>'+
+        '<td>'+buildPickCell(row)+'</td>'+
+        '<td>'+buildModelCell(row)+'</td>'+
+        '<td style="text-align:center;font-weight:700;font-size:14px" class="'+edgeColor(ev)+'">'+ev.toFixed(1)+'</td>'+
+        '<td style="text-align:center"><span class="heat-pill '+heat.cls+'">'+heat.emoji+'</span></td>';
+
+    return tr;
+}
+
+function populateFilters(picks){
+    var sel=document.getElementById('fMatchup');
+    // Clear old options except first
+    while(sel.options.length>1)sel.remove(1);
+    var matchups={};
+    picks.forEach(function(p){matchups[p.game]=true;});
+    Object.keys(matchups).sort().forEach(function(m){
+        var o=document.createElement('option');
+        o.value=m;o.textContent=m;
+        sel.appendChild(o);
+    });
+}
+
+function renderTable(picks){
+    var tbody=document.getElementById('slateBody');
+    tbody.innerHTML='';
+    picks.sort(function(a,b){
+        return parseFloat(b.no_vig_ev)-parseFloat(a.no_vig_ev);
+    });
+    picks.forEach(function(row,i){
+        var tr=buildRow(row);
+        tr.style.background=i%2===0?'#ffffff':'#f8f9fa';
+        tbody.appendChild(tr);
+    });
+}
+
+function applyFilters(){
+    var m=document.getElementById('fMatchup').value;
+    var s=document.getElementById('fSeg').value;
+    var k=document.getElementById('fMkt').value;
+    var e=parseFloat(document.getElementById('fEdge').value)||0;
+    var rec=document.getElementById('fRec').value;
+    var rows=document.querySelectorAll('#slate tbody tr');
+    var vis=0;
+    rows.forEach(function(r){
+        var show=true;
+        if(m&&r.dataset.matchup!==m)show=false;
+        if(s&&r.dataset.seg!==s)show=false;
+        if(k&&r.dataset.mkt!==k)show=false;
+        if(e&&parseFloat(r.dataset.edge)<e)show=false;
+        if(rec==='yes'&&r.dataset.rec!=='yes')show=false;
+        r.style.display=show?'':'none';
+        if(show){
+            r.style.background=vis%2===0?'#ffffff':'#f8f9fa';
+            vis++;
+        }
+    });
+}
+
+function resetFilters(){
+    document.getElementById('fMatchup').value='';
+    document.getElementById('fSeg').value='';
+    document.getElementById('fMkt').value='';
+    document.getElementById('fEdge').value='';
+    document.getElementById('fRec').value='';
+    applyFilters();
+}
+
+function sortTable(col,type){
+    var tb=document.querySelector('#slate tbody');
+    var rows=Array.from(tb.rows);
+    if(_sortCol===col){_sortAsc=!_sortAsc;}
+    else{_sortCol=col;_sortAsc=type==='num'?false:true;}
+    rows.sort(function(a,b){
+        var av=a.cells[col].textContent.trim();
+        var bv=b.cells[col].textContent.trim();
+        if(type==='num'){
+            av=parseFloat(av)||0;
+            bv=parseFloat(bv)||0;
+            return _sortAsc?av-bv:bv-av;
+        }
+        return _sortAsc?av.localeCompare(bv):bv.localeCompare(av);
+    });
+    rows.forEach(function(r,i){
+        tb.appendChild(r);
+        r.style.background=i%2===0?'#ffffff':'#f8f9fa';
+    });
+    document.querySelectorAll('#slate thead th .sort-arrow').forEach(function(s,i){
+        s.textContent=i===col?(_sortAsc?'\u25B2':'\u25BC'):'\u25B2\u25BC';
+    });
+}
+
+function refreshOdds(){
+    var btn=document.getElementById('refreshBtn');
+    btn.disabled=true;
+    btn.innerHTML='<span class="spinner"></span>Refreshing...';
+    var dateParam=getDateParam();
+    var url='/api/slate?refresh=true'+(dateParam?'&date='+dateParam:'');
+    fetch(url)
+        .then(function(r){return r.json();})
+        .then(function(d){
+            if(d.status==='ok'){
+                _data=d.picks;
+                renderTable(_data);
+                populateFilters(_data);
+                updateHeader(d);
+                applyFilters();
+            }
+        })
+        .catch(function(err){console.error('Refresh failed:',err);})
+        .finally(function(){
+            btn.disabled=false;
+            btn.innerHTML='&#10227; Refresh Odds';
         });
+}
+
+function updateHeader(d){
+    var recCount=0;
+    d.picks.forEach(function(p){
+        if(p.is_recommended==='True'||p.is_recommended==='true'||p.is_recommended===true)recCount++;
     });
-}
-function applyFilter(f) {
-    if (!table) return;
-    table.clearFilter();
-    if (f === 'rec') table.setFilter(d => d.is_recommended === 'True' || d.is_recommended === true);
-    else if (f === 'FG' || f === 'F5') table.setFilter('segment', '=', f);
-}
-
-/* ── Data Loading ────────────────────────────────────────────────── */
-async function loadSlate() {
-    const url = '/api/slate' + (dateQ ? '?date=' + dateQ : '');
-    try {
-        const r = await fetch(url);
-        const d = await r.json();
-        if (d.status === 'ok' && d.picks && d.picks.length > 0) { render(d); return; }
-    } catch {}
-    // No cached data — show empty state
-    showEmpty();
+    var games={};
+    d.picks.forEach(function(p){games[p.game]=true;});
+    var nGames=Object.keys(games).length;
+    document.getElementById('slateDate').textContent=d.date||'';
+    document.getElementById('slateMeta').textContent=
+        'Model v1.0 \u00b7 Odds pulled '+(d.last_refreshed||'\u2014')+
+        ' \u00b7 '+nGames+' games \u00b7 '+d.picks.length+' picks \u00b7 '+recCount+' recommended';
+    document.getElementById('slateFooter').textContent=
+        'GBSV MLB v1.0 \u00b7 Sorted by EV descending \u00b7 \u2605 = recommended';
 }
 
-async function doRefresh() {
-    const btn = document.getElementById('btn-refresh');
-    const ov = document.getElementById('overlay');
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner"></span>Fetching...';
-    ov.style.display = 'flex';
-    document.getElementById('overlay-msg').textContent = 'Fetching fresh odds & running models...';
-
-    const url = '/api/slate?refresh=true' + (dateQ ? '&date=' + dateQ : '');
-    try {
-        const r = await fetch(url);
-        const d = await r.json();
-        if (d.status === 'ok') { render(d); toast('Odds refreshed ✓', 'success'); }
-        else { toast(d.message || 'Error fetching odds', 'error'); }
-    } catch (e) { toast('Network error: ' + e.message, 'error'); }
-    finally { btn.disabled = false; btn.innerHTML = '🔄 Fetch Fresh Odds'; ov.style.display = 'none'; }
+function loadSlate(){
+    var dateParam=getDateParam();
+    var url='/api/slate'+(dateParam?'?date='+dateParam:'');
+    fetch(url)
+        .then(function(r){return r.json();})
+        .then(function(d){
+            document.getElementById('loading').style.display='none';
+            if(d.status!=='ok'||!d.picks||d.picks.length===0){
+                document.getElementById('error-msg').style.display='block';
+                document.getElementById('error-msg').textContent=
+                    'No picks available. '+(d.message||'Run the pipeline first or click Refresh Odds.');
+                return;
+            }
+            _data=d.picks;
+            document.getElementById('slate').style.display='table';
+            renderTable(_data);
+            populateFilters(_data);
+            updateHeader(d);
+        })
+        .catch(function(err){
+            document.getElementById('loading').style.display='none';
+            document.getElementById('error-msg').style.display='block';
+            document.getElementById('error-msg').textContent='Failed to load slate: '+err;
+        });
 }
 
-async function postToTeams() {
-    const btn = document.getElementById('btn-teams');
-    btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Posting...';
-    const url = '/api/slate/teams' + (dateQ ? '?date=' + dateQ : '');
-    try {
-        const r = await fetch(url, { method: 'POST' });
-        const d = await r.json();
-        if (d.status === 'ok') toast('Posted to Teams ✓', 'success');
-        else toast(d.message || 'Teams post failed', 'error');
-    } catch (e) { toast('Network error: ' + e.message, 'error'); }
-    finally { btn.disabled = false; btn.innerHTML = '📢 Post to Teams'; }
-}
-
-/* ── Render ───────────────────────────────────────────────────────── */
-function showEmpty() {
-    document.getElementById('table-wrap').innerHTML =
-        '<div class="empty"><h2>No picks loaded</h2><p>Tap "Fetch Fresh Odds" to generate today\'s slate.</p></div>';
-}
-
-function render(data) {
-    allData = data.picks || [];
-    const games = new Set(allData.map(p => p.game)).size;
-    const recs = allData.filter(p => p.is_recommended === 'True' || p.is_recommended === true).length;
-    const evs = allData.map(p => parseFloat(p.no_vig_ev) || 0);
-    const topEv = evs.length ? Math.max(...evs) : 0;
-
-    document.getElementById('hdr-sub').textContent =
-        data.date + '  ·  ' + data.total_picks + ' picks  ·  Updated ' + new Date().toLocaleTimeString();
-    document.getElementById('s-games').textContent = games;
-    document.getElementById('s-picks').textContent = data.total_picks;
-    document.getElementById('s-recs').textContent = recs;
-    document.getElementById('s-ev').textContent = (topEv > 0 ? '+' : '') + (topEv * 100).toFixed(1) + '%';
-
-    // Ensure table-wrap has the div
-    document.getElementById('table-wrap').innerHTML = '<div id="picks-table"></div>';
-    buildTable(allData);
-}
-
-/* ── Table ────────────────────────────────────────────────────────── */
-function fmtEv(cell) {
-    const v = parseFloat(cell.getValue());
-    const s = (v * 100).toFixed(1) + '%';
-    if (v > 0.03) return '<span class="ev-pos">+' + s + '</span>';
-    if (v > 0)    return '<span class="ev-mid">+' + s + '</span>';
-    return '<span class="ev-neg">' + s + '</span>';
-}
-function fmtPct(cell) { return (parseFloat(cell.getValue()) * 100).toFixed(1) + '%'; }
-function fmtOdds(cell) { const v = parseInt(cell.getValue()); return v > 0 ? '+'+v : ''+v; }
-function fmtSeg(cell) {
-    const v = cell.getValue();
-    return v === 'FG' ? '<span class="badge b-fg">FG</span>' : '<span class="badge b-f5">F5</span>';
-}
-function fmtStars(cell) {
-    const c = parseFloat(cell.getRow().getData().confidence) || 0;
-    const n = Math.round(c * 5);
-    return '<span class="stars">' + '★'.repeat(n) + '☆'.repeat(5 - n) + '</span>';
-}
-function fmtRec(cell) {
-    const v = cell.getValue();
-    return (v === 'True' || v === true) ? '<span class="badge b-rec">✓ REC</span>' : '';
-}
-function rowFmt(row) {
-    const d = row.getData();
-    if (d.is_recommended === 'True' || d.is_recommended === true)
-        row.getElement().classList.add('rec-row');
-}
-
-function buildTable(data) {
-    if (table) { table.destroy(); table = null; }
-    table = new Tabulator('#picks-table', {
-        data: data,
-        layout: 'fitDataStretch',
-        responsiveLayout: 'collapse',
-        pagination: data.length > 50,
-        paginationSize: 50,
-        rowFormatter: rowFmt,
-        initialSort: [{ column: 'no_vig_ev', dir: 'desc' }],
-        columns: [
-            { title: '', formatter: 'responsiveCollapse', width: 30, minWidth: 30, hozAlign: 'center', resizable: false, headerSort: false, responsive: 0 },
-            { title: 'Rec', field: 'is_recommended', formatter: fmtRec, width: 65, hozAlign: 'center', responsive: 0,
-              sorter: (a,b)=>((a==='True'||a===true)?1:0)-((b==='True'||b===true)?1:0) },
-            { title: 'Game', field: 'game', minWidth: 150, responsive: 0, headerFilter: 'input', headerFilterPlaceholder: 'search...' },
-            { title: 'Seg', field: 'segment', formatter: fmtSeg, width: 55, hozAlign: 'center', responsive: 0 },
-            { title: 'Market', field: 'market_type', width: 85, responsive: 2 },
-            { title: 'Pick', field: 'pick', minWidth: 140, responsive: 0 },
-            { title: 'Odds', field: 'odds_current', formatter: fmtOdds, width: 65, hozAlign: 'right', sorter: 'number', responsive: 0 },
-            { title: 'Model', field: 'model_prob', formatter: fmtPct, width: 70, hozAlign: 'right', sorter: 'number', responsive: 3 },
-            { title: 'Implied', field: 'implied_prob', formatter: fmtPct, width: 70, hozAlign: 'right', sorter: 'number', responsive: 4 },
-            { title: 'Edge', field: 'no_vig_ev', formatter: fmtEv, width: 75, hozAlign: 'right', sorter: 'number', responsive: 0 },
-            { title: 'Kelly', field: 'kelly', formatter: fmtPct, width: 65, hozAlign: 'right', sorter: 'number', responsive: 3 },
-            { title: 'Conf', field: 'confidence', width: 55, hozAlign: 'right', sorter: 'number', responsive: 4,
-              formatter: c => parseFloat(c.getValue()).toFixed(2) },
-            { title: 'Rating', field: 'confidence', formatter: fmtStars, width: 100, hozAlign: 'center', responsive: 2, headerSort: false },
-            { title: 'Quality', field: 'odds_quality', width: 65, hozAlign: 'center', responsive: 5 },
-        ],
-    });
-}
-
-/* ── Toast ────────────────────────────────────────────────────────── */
-function toast(msg, type) {
-    const t = document.getElementById('toast');
-    t.textContent = msg;
-    t.className = 'toast show ' + (type || '');
-    setTimeout(() => t.className = 'toast', 3500);
-}
+loadSlate();
 </script>
 </body>
 </html>

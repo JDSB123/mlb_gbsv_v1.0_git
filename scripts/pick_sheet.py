@@ -90,6 +90,107 @@ def _kelly_fraction(model_prob: float, decimal_odds: float) -> float:
     return max(0.0, f)
 
 
+def _build_rationale(
+    *,
+    model_prob: float,
+    implied_prob: float,
+    ev: float,
+    kelly: float,
+    confidence: float,
+    cold_start: bool,
+    n_models: int,
+    line_move: str,
+    exp_home: float,
+    exp_away: float,
+    segment: str,
+    market_type: str,
+    home: str,
+    away: str,
+    feat: dict[str, float] | None = None,
+) -> str:
+    """Build categorized rationale — always >=3 of 6 categories."""
+    cats: list[str] = []
+
+    if cold_start:
+        cats.append("\u26a0 COLD START \u2014 limited historical data, odds-driven")
+
+    # 1. Market Context
+    div = abs(model_prob - implied_prob)
+    mkt = f"Model-market spread {div:.1%}"
+    if div > 0.08:
+        mkt = f"Large divergence ({div:.1%}) \u2014 sharp-side value"
+    elif div > 0.04:
+        mkt = f"Moderate divergence ({div:.1%})"
+    if line_move and line_move != "\u2014":
+        mkt += f" \u00b7 Line range: {line_move}"
+    cats.append(f"\U0001f4ca Market: {mkt}")
+
+    # 2. Team Fundamentals
+    fund = f"Projected: {home} {exp_home:.1f} \u2013 {away} {exp_away:.1f}"
+    if feat:
+        hwr = feat.get("home_win_rate_long", 0)
+        awr = feat.get("away_win_rate_long", 0)
+        if hwr > 0 and awr > 0:
+            fund = f"{home} L20 {hwr:.0%} vs {away} {awr:.0%} \u00b7 " + fund
+        hrs = feat.get("home_runs_avg_short", 0)
+        ars = feat.get("away_runs_avg_short", 0)
+        if hrs > 0:
+            fund += f" \u00b7 Scoring L5: {home} {hrs:.1f}, {away} {ars:.1f} R/G"
+    cats.append(f"\u26be Fundamentals: {fund}")
+
+    # 3. Model Confidence
+    cats.append(
+        f"\U0001f916 Model: {model_prob:.1%} vs implied {implied_prob:.1%} "
+        f"({n_models} models) \u00b7 EV {ev:+.1%} \u00b7 Kelly {kelly:.2%} \u00b7 "
+        f"Conf {confidence:.0%}"
+    )
+
+    # 4. Situational Factors
+    sit: list[str] = []
+    if feat:
+        rh = feat.get("rest_days_home", 1)
+        ra = feat.get("rest_days_away", 1)
+        if rh >= 2 and rh > ra:
+            sit.append(f"{home} rested ({rh:.0f}d off)")
+        elif ra >= 2 and ra > rh:
+            sit.append(f"{away} rested ({ra:.0f}d off)")
+        if feat.get("is_weekend", 0):
+            sit.append("Weekend slate")
+    if segment == "F5":
+        sit.append("First 5 \u2014 starter-driven")
+    if sit:
+        cats.append("\U0001f4cb Situational: " + " \u00b7 ".join(sit))
+
+    # 5. Sentiment / Sharp Action
+    if div > 0.06:
+        sharp = "Model sees sharp-side value vs consensus"
+        if line_move and line_move != "\u2014":
+            sharp += " \u00b7 Book-to-book variance suggests instability"
+        cats.append(f"\U0001f4b0 Sentiment: {sharp}")
+
+    # 6. Historical Trends
+    if feat and not cold_start:
+        trends: list[str] = []
+        hws = feat.get("home_win_rate_short", 0)
+        hwl = feat.get("home_win_rate_long", 0)
+        aws = feat.get("away_win_rate_short", 0)
+        awl = feat.get("away_win_rate_long", 0)
+        if hws > 0 and hwl > 0:
+            if hws > hwl + 0.05:
+                trends.append(f"{home} hot (L5 {hws:.0%} vs L20 {hwl:.0%})")
+            elif hws < hwl - 0.05:
+                trends.append(f"{home} cold (L5 {hws:.0%} vs L20 {hwl:.0%})")
+        if aws > 0 and awl > 0:
+            if aws > awl + 0.05:
+                trends.append(f"{away} hot (L5 {aws:.0%} vs L20 {awl:.0%})")
+            elif aws < awl - 0.05:
+                trends.append(f"{away} cold (L5 {aws:.0%} vs L20 {awl:.0%})")
+        if trends:
+            cats.append("\U0001f4c8 Trends: " + " \u00b7 ".join(trends))
+
+    return " | ".join(cats)
+
+
 # ═════════════════════════════════════════════════════════════════════════
 # Core: Build pick rows
 # ═════════════════════════════════════════════════════════════════════════
@@ -100,6 +201,7 @@ def _build_pick_rows(
     today: str,
     *,
     cold_start: bool = False,
+    features_X: pd.DataFrame | None = None,
 ) -> list[dict[str, Any]]:
     """Generate one row per (game × segment × market × side)."""
     rows: list[dict[str, Any]] = []
@@ -114,6 +216,14 @@ def _build_pick_rows(
         away = game["away_team"]
         matchup = f"{away} @ {home}"
         game_time = str(game["game_date"])
+
+        # Feature lookup for rationale enrichment
+        feat: dict[str, float] | None = None
+        if features_X is not None:
+            try:
+                feat = features_X.iloc[gi].to_dict() if gi < len(features_X) else None
+            except (IndexError, KeyError):
+                feat = None
 
         # ── Collect per-model probabilities and average them ─────────
         n_models = len(model_results)
@@ -388,23 +498,6 @@ def _build_pick_rows(
                 if cold_start:
                     confidence *= 0.5
 
-                # Build rationale for recommended picks
-                rationale = ""
-                if cold_start and is_rec:
-                    bullets = []
-                    bullets.append(f"⚠ COLD START — low confidence, odds-driven")
-                    bullets.append(f"Model: {model_p:.1%} vs implied {_implied_prob(odds_cur):.1%} ({n_models} models)")
-                    bullets.append(f"EV: {ev:+.1%} | Kelly: {kelly:.2%}")
-                    rationale = " | ".join(bullets)
-                elif is_rec:
-                    bullets = []
-                    bullets.append(f"Model: {model_p:.1%} vs implied {_implied_prob(odds_cur):.1%} ({n_models} models agree)")
-                    bullets.append(f"EV: {ev:+.1%} | Kelly: {kelly:.2%}")
-                    if abs(model_p - _implied_prob(odds_cur)) > 0.08:
-                        bullets.append("Sharp edge: large model-vs-market divergence")
-                    bullets.append(f"Expected score: {exp_fg_home:.1f}-{exp_fg_away:.1f} FG / {exp_f5_home:.1f}-{exp_f5_away:.1f} F5")
-                    rationale = " | ".join(bullets)
-
                 # Line movement — Since we have multiple bookmaker rows, compute
                 # the spread of odds across books as a proxy for movement.
                 # (True line movement requires historical snapshots.)
@@ -417,6 +510,27 @@ def _build_pick_rows(
                 else:
                     line_move = "—"
 
+                # Build categorized rationale for every pick
+                exp_h = exp_f5_home if seg["segment"] == "F5" else exp_fg_home
+                exp_a = exp_f5_away if seg["segment"] == "F5" else exp_fg_away
+                rationale = _build_rationale(
+                    model_prob=model_p,
+                    implied_prob=_implied_prob(odds_cur),
+                    ev=ev,
+                    kelly=kelly,
+                    confidence=confidence,
+                    cold_start=cold_start,
+                    n_models=n_models,
+                    line_move=line_move,
+                    exp_home=exp_h,
+                    exp_away=exp_a,
+                    segment=seg["segment"],
+                    market_type=mkt["market_type"],
+                    home=home,
+                    away=away,
+                    feat=feat,
+                )
+
                 # Steam / RLM flags (require live consensus data — mark as N/A
                 # since we don't have public betting splits in current API tier)
                 steam_flag = False
@@ -427,6 +541,8 @@ def _build_pick_rows(
                 rows.append({
                     "date": today,
                     "game": matchup,
+                    "home_team": home,
+                    "away_team": away,
                     "game_time": game_time,
                     "segment": seg["segment"],
                     "market_type": mkt["market_type"],
@@ -444,6 +560,8 @@ def _build_pick_rows(
                     "kelly": round(kelly, 4),
                     "confidence": round(confidence, 4),
                     "is_recommended": is_rec,
+                    "exp_home_score": round(exp_h, 2),
+                    "exp_away_score": round(exp_a, 2),
                     "rationale_bullets": rationale,
                 })
 
@@ -531,7 +649,7 @@ def main() -> None:
         return
 
     # ── 4. Build pick rows ───────────────────────────────────────────
-    pick_rows = _build_pick_rows(model_input, model_results, today, cold_start=cold_start)
+    pick_rows = _build_pick_rows(model_input, model_results, today, cold_start=cold_start, features_X=features.X)
     logger.info("Generated %d pick rows across all games/segments/markets", len(pick_rows))
 
     # ── 5. Write CSV ─────────────────────────────────────────────────
@@ -540,11 +658,13 @@ def main() -> None:
     csv_path = out_dir / f"picks_{today}.csv"
 
     fieldnames = [
-        "date", "game", "game_time", "segment", "market_type", "pick",
+        "date", "game", "home_team", "away_team", "game_time",
+        "segment", "market_type", "pick",
         "odds_current", "odds_quality", "line_move",
         "steam_flag", "rlm_flag", "bets_pct", "money_pct",
         "model_prob", "implied_prob", "no_vig_ev", "kelly", "confidence",
-        "is_recommended", "rationale_bullets",
+        "is_recommended", "exp_home_score", "exp_away_score",
+        "rationale_bullets",
     ]
 
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
