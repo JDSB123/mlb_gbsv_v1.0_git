@@ -375,14 +375,14 @@ def _build_pick_rows(
 
                 # Recommendation: require real odds for full confidence
                 #   live odds:  EV > 3% AND model_prob > 52%
+                #   cold_start + live:  EV > 5% AND model_prob > 55% (stricter)
                 #   no_odds/synthetic: never recommend (no real line to bet against)
-                #   cold_start: never recommend (features are mostly defaults)
-                if cold_start:
+                if quality != "live":
                     is_rec = False
-                elif quality == "live":
+                elif cold_start:
+                    is_rec = ev > 0.05 and model_p > 0.55
+                else:
                     is_rec = ev > 0.03 and model_p > 0.52
-                else:  # synthetic / no_odds
-                    is_rec = False
 
                 # In cold start, discount confidence by 50%
                 if cold_start:
@@ -390,8 +390,12 @@ def _build_pick_rows(
 
                 # Build rationale for recommended picks
                 rationale = ""
-                if cold_start:
-                    rationale = "COLD START — predictions clustered, low confidence"
+                if cold_start and is_rec:
+                    bullets = []
+                    bullets.append(f"⚠ COLD START — low confidence, odds-driven")
+                    bullets.append(f"Model: {model_p:.1%} vs implied {_implied_prob(odds_cur):.1%} ({n_models} models)")
+                    bullets.append(f"EV: {ev:+.1%} | Kelly: {kelly:.2%}")
+                    rationale = " | ".join(bullets)
                 elif is_rec:
                     bullets = []
                     bullets.append(f"Model: {model_p:.1%} vs implied {_implied_prob(odds_cur):.1%} ({n_models} models agree)")
@@ -499,7 +503,7 @@ def main() -> None:
     if cold_start:
         logger.warning(
             "COLD START: %d of %d features (%.0f%%) are constant — "
-            "predictions will cluster and are LOW CONFIDENCE. "
+            "odds-driven predictions only, stricter thresholds applied. "
             "This is expected early in the season.",
             n_constant, n_total, pct_constant * 100,
         )
@@ -554,29 +558,16 @@ def main() -> None:
     recs = [r for r in pick_rows if r["is_recommended"]]
     logger.info("")
     logger.info("═" * 100)
-    if cold_start:
-        logger.info("  COLD START — %d/%d features constant. No recommendations.", n_constant, n_total)
-        logger.info("  Showing top EV picks for reference only (NOT actionable).")
+    if cold_start and recs:
+        logger.info("  ⚠ COLD START — %d/%d features constant. %d picks passed stricter thresholds.", n_constant, n_total, len(recs))
+        logger.info("  Odds-driven only. Confidence discounted 50%%.")
+    elif cold_start:
+        logger.info("  COLD START — %d/%d features constant. No picks passed stricter thresholds (EV>5%%, prob>55%%).", n_constant, n_total)
     else:
         logger.info("  RECOMMENDED PICKS FOR %s  (%d of %d)", today, len(recs), len(pick_rows))
     logger.info("═" * 100)
 
-    if cold_start:
-        # Show top 15 LIVE-odds picks by EV for reference
-        live_picks = [r for r in pick_rows if r["odds_quality"] == "live"]
-        top = sorted(live_picks, key=lambda x: -x["no_vig_ev"])[:15]
-        header = f"{'Game':<22} {'Seg':>3} {'Market':<12} {'Pick':<20} {'Odds':>6} {'Qual':<5} {'Model%':>7} {'Impl%':>7} {'EV':>7} {'Kelly':>7} {'Conf':>6}"
-        logger.info(header)
-        logger.info("-" * len(header))
-        for r in top:
-            logger.info(
-                f"{r['game']:<22} {r['segment']:>3} {r['market_type']:<12} "
-                f"{r['pick']:<20} {r['odds_current']:>+6d} "
-                f"{r['odds_quality']:<5} "
-                f"{r['model_prob']:>6.1%} {r['implied_prob']:>6.1%} "
-                f"{r['no_vig_ev']:>+6.1%} {r['kelly']:>6.2%} {r['confidence']:>5.2f}"
-            )
-    elif not recs:
+    if not recs:
         logger.info("  No picks met threshold (EV > 3%% AND model_prob > 52%%)")
         logger.info("  Review full sheet: %s", csv_path)
     else:
