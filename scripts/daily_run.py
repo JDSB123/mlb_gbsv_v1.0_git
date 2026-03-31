@@ -43,6 +43,7 @@ configure_telemetry()
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    force=True,
 )
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,16 @@ def main() -> None:
         config = config.override(data={"loader": args.loader})
 
     db = TrackingDB(args.db)
+
+    # Alembic's fileConfig() resets root logger to WARN and disables loggers
+    # not listed in alembic.ini.  Re-apply our desired configuration.
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        force=True,
+    )
+    logger.disabled = False
+
     run_id = f"daily-{datetime.now(tz=UTC).strftime('%Y%m%d')}-{uuid.uuid4().hex[:6]}"
     alerts = AlertManager() if not args.no_alerts else None
 
@@ -110,7 +121,7 @@ def main() -> None:
         logger.info("=== Step 4: Loading today's games for prediction ===")
         today_df = _load_todays_games(config)
         if today_df.empty:
-            logger.info("No games today — skipping predictions")
+            logger.info("No games today \u2014 skipping predictions")
             return
 
         today_processed = preprocess(today_df)
