@@ -120,6 +120,9 @@ class AlertConfig:
     """Alert / notification settings (populated from env vars)."""
 
     discord_webhook_url: str = ""
+    teams_webhook_url: str = ""
+    teams_group_id: str = ""
+    teams_channel_id: str = ""
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_user: str = ""
@@ -133,6 +136,9 @@ class AlertConfig:
             discord_webhook_url=get_secret(
                 "discord-webhook-url", "DISCORD_WEBHOOK_URL"
             ),
+            teams_webhook_url=os.getenv("TEAMS_WEBHOOK_URL", ""),
+            teams_group_id=os.getenv("TEAMS_GROUP_ID", ""),
+            teams_channel_id=os.getenv("TEAMS_CHANNEL_ID", ""),
             smtp_host=os.getenv("SMTP_HOST", ""),
             smtp_port=int(os.getenv("SMTP_PORT", "587")),
             smtp_user=os.getenv("SMTP_USER", ""),

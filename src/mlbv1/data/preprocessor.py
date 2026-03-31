@@ -34,6 +34,13 @@ OPTIONAL_COLUMNS = [
     "f5_under_odds",
     "f5_home_score",
     "f5_away_score",
+    "home_tt",
+    "away_tt",
+    "home_tt_over_odds",
+    "home_tt_under_odds",
+    "away_tt_over_odds",
+    "away_tt_under_odds",
+    "event_id",
 ]
 
 
@@ -87,6 +94,12 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
         "f5_under_odds",
         "f5_home_score",
         "f5_away_score",
+        "home_tt",
+        "away_tt",
+        "home_tt_over_odds",
+        "home_tt_under_odds",
+        "away_tt_over_odds",
+        "away_tt_under_odds",
     ]
     for col in optional_numeric:
         if col in df.columns:

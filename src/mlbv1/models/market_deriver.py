@@ -26,6 +26,11 @@ class MarketDeriver:
             # Team Totals
             home_tt_line = lines.get(f"{prefix}home_tt", 2.5)  # fallback
             away_tt_line = lines.get(f"{prefix}away_tt", 2.5)
+            # fillna for games where team totals weren't available from API
+            if isinstance(home_tt_line, pd.Series):
+                home_tt_line = home_tt_line.fillna(2.5)
+            if isinstance(away_tt_line, pd.Series):
+                away_tt_line = away_tt_line.fillna(2.5)
 
             # Poisson SF: P(X > k) = 1 - cdf(k).
             # E.g. TT = 3.5 -> P(X >= 4) -> sf(3)

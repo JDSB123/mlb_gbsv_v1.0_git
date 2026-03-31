@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 from flask.typing import ResponseReturnValue
 
 from mlbv1.observability import configure_telemetry
@@ -95,9 +95,171 @@ def root() -> ResponseReturnValue:
         "endpoints": {
             "health": "/health",
             "trigger": "/trigger (POST)",
+            "picks": "/picks (GET, auth) — fetch fresh odds & return pick sheet JSON",
+            "slate": "/slate — interactive pick sheet (mobile-ready)",
+            "api_slate": "/api/slate?date=&refresh=true — JSON picks data",
+            "api_slate_teams": "/api/slate/teams (POST) — post slate to Teams",
         },
     }
     return jsonify(info), 200
+
+
+@app.route("/picks", methods=["GET"])
+def fetch_picks() -> ResponseReturnValue:
+    """Manually fetch fresh odds, run models, return pick sheet as JSON.
+
+    Query params:
+        date  — YYYY-MM-DD (default: today)
+    """
+    authorized, auth_error = _is_trigger_authorized()
+    if not authorized:
+        status = 503 if auth_error and "not configured" in auth_error.lower() else 401
+        return jsonify({"status": "error", "message": auth_error}), status
+
+    target_date = request.args.get("date", datetime.now(tz=UTC).strftime("%Y-%m-%d"))
+
+    try:
+        _run_pick_sheet(target_date)
+    except Exception as exc:
+        logger.exception("Pick sheet generation failed: %s", exc)
+        return jsonify({"status": "error", "message": str(exc)}), 500
+
+    rows = _read_picks_csv(target_date)
+    if not rows:
+        return jsonify({"status": "error", "message": "Pick sheet was not generated"}), 500
+
+    recs = [r for r in rows if r.get("is_recommended", "").lower() == "true"]
+    return (
+        jsonify(
+            {
+                "status": "ok",
+                "date": target_date,
+                "total_picks": len(rows),
+                "recommended": len(recs),
+                "picks": rows,
+            }
+        ),
+        200,
+    )
+
+
+# ── Static slate page ────────────────────────────────────────────────
+_STATIC_DIR = Path(__file__).parent / "static"
+
+
+@app.route("/slate", methods=["GET"])
+def slate_page() -> ResponseReturnValue:
+    """Serve the interactive pick sheet page (mobile-responsive, sortable)."""
+    return send_from_directory(str(_STATIC_DIR), "slate.html")
+
+
+def _run_pick_sheet(target_date: str) -> None:
+    """Run pick_sheet.main() to generate/refresh picks CSV."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "pick_sheet", PROJECT_ROOT / "scripts" / "pick_sheet.py"
+    )
+    if not spec or not spec.loader:
+        raise ImportError("Could not load pick_sheet module")
+
+    pick_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pick_module)
+
+    old_argv = sys.argv[:]
+    try:
+        sys.argv = ["pick_sheet.py", "--date", target_date]
+        pick_module.main()
+    finally:
+        sys.argv = old_argv
+
+
+def _read_picks_csv(target_date: str) -> list[dict[str, str]]:
+    """Read the picks CSV for a date, returning list of dicts."""
+    import csv as csv_mod
+
+    csv_path = PROJECT_ROOT / "artifacts" / f"picks_{target_date}.csv"
+    if not csv_path.exists():
+        return []
+    with open(csv_path, encoding="utf-8") as f:
+        return list(csv_mod.DictReader(f))
+
+
+@app.route("/api/slate", methods=["GET"])
+def api_slate() -> ResponseReturnValue:
+    """Return pick sheet data as JSON (public, no auth).
+
+    Query params:
+        date    — YYYY-MM-DD (default: today)
+        refresh — if 'true', re-fetch odds and regenerate picks
+    """
+    target_date = request.args.get("date", datetime.now(tz=UTC).strftime("%Y-%m-%d"))
+    refresh = request.args.get("refresh", "").lower() == "true"
+
+    if refresh:
+        try:
+            _run_pick_sheet(target_date)
+        except Exception as exc:
+            logger.exception("Slate refresh failed: %s", exc)
+            return jsonify({"status": "error", "message": str(exc)}), 500
+
+    rows = _read_picks_csv(target_date)
+    recs = [r for r in rows if r.get("is_recommended", "").lower() == "true"]
+    return (
+        jsonify(
+            {
+                "status": "ok",
+                "date": target_date,
+                "total_picks": len(rows),
+                "recommended": len(recs),
+                "picks": rows,
+            }
+        ),
+        200,
+    )
+
+
+@app.route("/api/slate/teams", methods=["POST"])
+def api_slate_teams() -> ResponseReturnValue:
+    """Post the current slate to the configured Teams channel."""
+    teams_url = os.getenv("TEAMS_WEBHOOK_URL", "").strip()
+    teams_group = os.getenv("TEAMS_GROUP_ID", "").strip()
+    teams_channel = os.getenv("TEAMS_CHANNEL_ID", "").strip()
+    if not teams_url and not (teams_group and teams_channel):
+        return (
+            jsonify(
+                {
+                    "status": "error",
+                    "message": "Teams not configured. Set TEAMS_GROUP_ID + "
+                    "TEAMS_CHANNEL_ID (Graph API) or TEAMS_WEBHOOK_URL in .env",
+                }
+            ),
+            400,
+        )
+
+    target_date = request.args.get("date", datetime.now(tz=UTC).strftime("%Y-%m-%d"))
+    rows = _read_picks_csv(target_date)
+    if not rows:
+        return jsonify({"status": "error", "message": f"No picks found for {target_date}"}), 404
+
+    try:
+        from mlbv1.alerts.teams import TeamsAlert
+
+        # Build the slate URL relative to the current request
+        slate_url = request.url_root.rstrip("/") + f"/slate?date={target_date}"
+        alert = TeamsAlert(
+            webhook_url=teams_url,
+            slate_base_url=request.url_root.rstrip("/"),
+            group_id=teams_group,
+            channel_id=teams_channel,
+        )
+        ok = alert.send_slate(rows, target_date, slate_url=slate_url)
+        if ok:
+            return jsonify({"status": "ok", "message": "Posted to Teams"}), 200
+        return jsonify({"status": "error", "message": "Teams webhook returned non-200"}), 502
+    except Exception as exc:
+        logger.exception("Teams post failed: %s", exc)
+        return jsonify({"status": "error", "message": str(exc)}), 500
 
 
 @app.route("/trigger", methods=["POST"])

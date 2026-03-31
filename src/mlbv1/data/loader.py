@@ -167,13 +167,10 @@ class OddsAPILoader(BaseLoader):
     """
 
     BASE = "https://api.the-odds-api.com/v4"
-    CORE_MARKETS = "spreads,h2h"
-    F5_MARKET_CANDIDATES = [
-        "h2h_1st_5_innings,spreads_1st_5_innings,totals_1st_5_innings",
-        "h2h_1st_5_innings,spreads_1st_5_innings",
-        "h2h_1st_half,spreads_1st_half,totals_1st_half",
-        "h2h_1st_half,spreads_1st_half",
-    ]
+    CORE_MARKETS = "h2h,spreads,totals"
+    F5_MARKETS = "h2h_1st_5_innings,spreads_1st_5_innings,totals_1st_5_innings"
+    # team_totals requires per-event endpoint (Additional Market)
+    TT_MARKETS = "team_totals"
 
     def __init__(self, base_url: str | None = None, api_key: str = "") -> None:
         self.base_url = (base_url or self.BASE).rstrip("/")
@@ -209,37 +206,55 @@ class OddsAPILoader(BaseLoader):
             raise DataLoaderError("Odds API payload is not a list")
         return data
 
+    def _get_event_odds(
+        self,
+        event_id: str,
+        markets: str,
+    ) -> dict[str, Any]:
+        """Fetch odds for a single event via per-event endpoint (premium)."""
+        params = urlencode(
+            {
+                "apiKey": self.api_key,
+                "regions": "us",
+                "markets": markets,
+                "oddsFormat": "american",
+            }
+        )
+        url = f"{self.base_url}/sports/baseball_mlb/events/{event_id}/odds/?{params}"
+        data: dict[str, Any] = self._http_get_json(url)
+        if not isinstance(data, dict):
+            raise DataLoaderError(f"Event odds response is not a dict for {event_id}")
+        return data
+
     def load(self) -> pd.DataFrame:
-        """Upcoming MLB odds (full game + best-effort F5 markets)."""
+        """Upcoming MLB odds — premium: all markets including team totals."""
         if not self.api_key:
             raise DataLoaderError(
                 "ODDS_API_KEY is missing. Set it in environment or config before using odds_api loader."
             )
 
+        # Core + totals in a single main-endpoint call
         base_payload = self._get_odds_payload(self.CORE_MARKETS)
 
-        # Attempt full-game totals in a safe, no-retry mode.
-        totals_payload = self._get_odds_payload("totals", suppress_errors=True)
-        if totals_payload:
-            base_payload = _merge_odds_payloads(base_payload, totals_payload)
-
-        # F5 keys vary by provider/season. Probe safely without breaking core odds.
-        f5_payload: list[dict[str, Any]] = []
-        # If user knows their account's exact F5 keys, use them first.
-        configured_f5 = os.getenv("ODDS_API_F5_MARKETS", "").strip()
-        candidates = [configured_f5] if configured_f5 else []
-        candidates.extend(self.F5_MARKET_CANDIDATES)
-
-        for candidate in candidates:
-            if not candidate:
-                continue
-            f5_payload = self._get_odds_payload(candidate, suppress_errors=True)
-            if f5_payload:
-                logger.info("Loaded F5 markets using Odds API keys: %s", candidate)
-                break
-
+        # F5 game-period markets (main endpoint)
+        f5_markets = os.getenv("ODDS_API_F5_MARKETS", "").strip() or self.F5_MARKETS
+        f5_payload = self._get_odds_payload(f5_markets, suppress_errors=True)
         if f5_payload:
             base_payload = _merge_odds_payloads(base_payload, f5_payload)
+            logger.info("Loaded F5 markets: %s", f5_markets)
+
+        # Team totals via per-event endpoint (premium additional market)
+        for item in list(base_payload):
+            event_id = item.get("id", "")
+            if not event_id:
+                continue
+            try:
+                tt_data = self._get_event_odds(event_id, self.TT_MARKETS)
+                base_payload = _merge_odds_payloads(base_payload, [tt_data])
+            except Exception as exc:
+                logger.debug(
+                    "Team totals unavailable for event %s: %s", event_id, exc
+                )
 
         return self._normalize(base_payload)
 
@@ -262,19 +277,17 @@ class OddsAPILoader(BaseLoader):
             raise DataLoaderError("Odds API scores payload is not a list")
         return self._normalize(data)
 
+    # Full set of premium MLB player prop markets
+    PROP_MARKETS = (
+        "batter_home_runs,batter_hits,batter_total_bases,batter_rbis,"
+        "batter_runs_scored,batter_strikeouts,batter_walks,batter_stolen_bases,"
+        "pitcher_strikeouts,pitcher_hits_allowed,pitcher_walks,"
+        "pitcher_earned_runs,pitcher_outs"
+    )
+
     def load_props(self, event_id: str) -> dict[str, Any]:
         """Fetch premium player props for a specific event."""
-        params = urlencode(
-            {
-                "apiKey": self.api_key,
-                "regions": "us",
-                "markets": "batter_home_runs,pitcher_strikeouts,batter_hits,pitcher_walks",
-                "oddsFormat": "american",
-            }
-        )
-        url = f"{self.base_url}/sports/baseball_mlb/events/{event_id}/odds/?{params}"
-        result: dict[str, Any] = self._http_get_json(url)
-        return result
+        return self._get_event_odds(event_id, self.PROP_MARKETS)
 
     def _normalize(self, payload: Iterable[dict[str, Any]]) -> pd.DataFrame:
         records: list[dict[str, Any]] = []
@@ -285,6 +298,7 @@ class OddsAPILoader(BaseLoader):
             # Pass through all market fields as-is (NaN if missing).
             # No -110 defaults — downstream must handle NaN explicitly.
             record: dict[str, Any] = {
+                "event_id": item.get("id", ""),
                 "game_date": item.get("commence_time"),
                 "home_team": home_team,
                 "away_team": away_team,
@@ -320,7 +334,7 @@ class OddsAPIHistoricalLoader(OddsAPILoader):
             {
                 "apiKey": self.api_key,
                 "regions": "us",
-                "markets": "spreads,h2h,totals",
+                "markets": "h2h,spreads,totals,h2h_1st_5_innings,spreads_1st_5_innings,totals_1st_5_innings",
                 "oddsFormat": "american",
                 "date": target_date,
             }
@@ -892,6 +906,26 @@ def _extract_all_markets(item: dict[str, Any]) -> dict[str, float]:
                     elif str(o.get("name", "")).lower() == "under":
                         _odds_accum["f5_under_odds"].append(float(o["price"]))
 
+            # Team totals (premium per-event market)
+            elif mkey == "team_totals":
+                for o in outcomes:
+                    if "price" not in o:
+                        continue
+                    desc = o.get("description", "")
+                    side = str(o.get("name", "")).lower()
+                    if desc == home:
+                        _line_accum["home_tt"].append(float(o.get("point", 0)))
+                        if side == "over":
+                            _odds_accum["home_tt_over_odds"].append(float(o["price"]))
+                        elif side == "under":
+                            _odds_accum["home_tt_under_odds"].append(float(o["price"]))
+                    elif desc == away:
+                        _line_accum["away_tt"].append(float(o.get("point", 0)))
+                        if side == "over":
+                            _odds_accum["away_tt_over_odds"].append(float(o["price"]))
+                        elif side == "under":
+                            _odds_accum["away_tt_under_odds"].append(float(o["price"]))
+
     # Build result: consensus average for odds, mode for lines, NaN if no data.
     def _american_to_prob(odds: float) -> float:
         """Convert American odds to implied probability."""
@@ -944,6 +978,12 @@ def _extract_all_markets(item: dict[str, Any]) -> dict[str, float]:
         "f5_total_runs": _mode(_line_accum["f5_total_runs"]) if _line_accum["f5_total_runs"] else 0.0,
         "f5_over_odds": _avg(_odds_accum["f5_over_odds"]),
         "f5_under_odds": _avg(_odds_accum["f5_under_odds"]),
+        "home_tt": _mode(_line_accum["home_tt"]) if _line_accum["home_tt"] else float("nan"),
+        "away_tt": _mode(_line_accum["away_tt"]) if _line_accum["away_tt"] else float("nan"),
+        "home_tt_over_odds": _avg(_odds_accum["home_tt_over_odds"]),
+        "home_tt_under_odds": _avg(_odds_accum["home_tt_under_odds"]),
+        "away_tt_over_odds": _avg(_odds_accum["away_tt_over_odds"]),
+        "away_tt_under_odds": _avg(_odds_accum["away_tt_under_odds"]),
     }
 
 

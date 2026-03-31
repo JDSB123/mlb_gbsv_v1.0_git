@@ -165,6 +165,14 @@ def _build_pick_rows(
         fg_over_odds = _odds(game.get("over_odds"))
         fg_under_odds = _odds(game.get("under_odds"))
 
+        # Team Total data (premium)
+        home_tt = _odds(game.get("home_tt"))
+        away_tt = _odds(game.get("away_tt"))
+        home_tt_over_odds = _odds(game.get("home_tt_over_odds"))
+        home_tt_under_odds = _odds(game.get("home_tt_under_odds"))
+        away_tt_over_odds = _odds(game.get("away_tt_over_odds"))
+        away_tt_under_odds = _odds(game.get("away_tt_under_odds"))
+
         # FG odds quality: "live" if we have real ML odds, else "no_odds"
         fg_has_odds = not (pd.isna(fg_home_ml) and pd.isna(fg_away_ml))
 
@@ -247,6 +255,44 @@ def _build_pick_rows(
                 "model_prob": 1.0 - avg.get("over_total_prob", 0.5),
                 "counter_odds": fg_over_odds if not pd.isna(fg_over_odds) else fg_under_odds,
                 "line": fg_total,
+            })
+
+        # Team Totals (premium — only when API provides real lines)
+        if not pd.isna(home_tt_over_odds):
+            fg_markets.append({
+                "market_type": "Team Total",
+                "pick": f"{home} Over {home_tt}",
+                "odds_current": home_tt_over_odds,
+                "model_prob": avg.get("home_tt_over_prob", 0.5),
+                "counter_odds": home_tt_under_odds if not pd.isna(home_tt_under_odds) else home_tt_over_odds,
+                "line": home_tt,
+            })
+        if not pd.isna(home_tt_under_odds):
+            fg_markets.append({
+                "market_type": "Team Total",
+                "pick": f"{home} Under {home_tt}",
+                "odds_current": home_tt_under_odds,
+                "model_prob": 1.0 - avg.get("home_tt_over_prob", 0.5),
+                "counter_odds": home_tt_over_odds if not pd.isna(home_tt_over_odds) else home_tt_under_odds,
+                "line": home_tt,
+            })
+        if not pd.isna(away_tt_over_odds):
+            fg_markets.append({
+                "market_type": "Team Total",
+                "pick": f"{away} Over {away_tt}",
+                "odds_current": away_tt_over_odds,
+                "model_prob": avg.get("away_tt_over_prob", 0.5),
+                "counter_odds": away_tt_under_odds if not pd.isna(away_tt_under_odds) else away_tt_over_odds,
+                "line": away_tt,
+            })
+        if not pd.isna(away_tt_under_odds):
+            fg_markets.append({
+                "market_type": "Team Total",
+                "pick": f"{away} Under {away_tt}",
+                "odds_current": away_tt_under_odds,
+                "model_prob": 1.0 - avg.get("away_tt_over_prob", 0.5),
+                "counter_odds": away_tt_over_odds if not pd.isna(away_tt_over_odds) else away_tt_under_odds,
+                "line": away_tt,
             })
 
         if fg_markets:

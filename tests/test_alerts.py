@@ -44,7 +44,13 @@ class TestDiscordAlert:
 class TestAlertManager:
     """Tests for unified alert manager."""
 
-    @patch.dict("os.environ", {"DISCORD_WEBHOOK_URL": "", "SMTP_HOST": ""})
+    @patch.dict("os.environ", {
+        "DISCORD_WEBHOOK_URL": "",
+        "SMTP_HOST": "",
+        "TEAMS_WEBHOOK_URL": "",
+        "TEAMS_GROUP_ID": "",
+        "TEAMS_CHANNEL_ID": "",
+    })
     def test_no_channels(self) -> None:
         mgr = AlertManager()
         assert not mgr.has_channels

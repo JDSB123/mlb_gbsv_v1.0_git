@@ -8,6 +8,7 @@ from typing import Any
 
 from mlbv1.alerts.discord import DiscordAlert
 from mlbv1.alerts.email_sender import EmailAlert
+from mlbv1.alerts.teams import TeamsAlert
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ class AlertManager:
     def __init__(self) -> None:
         self.discord: DiscordAlert | None = None
         self.email: EmailAlert | None = None
+        self.teams: TeamsAlert | None = None
         self._init_channels()
 
     def _init_channels(self) -> None:
@@ -52,9 +54,24 @@ class AlertManager:
             )
             logger.info("Email alerts enabled")
 
+        teams_url = os.getenv("TEAMS_WEBHOOK_URL", "")
+        teams_group = os.getenv("TEAMS_GROUP_ID", "")
+        teams_channel = os.getenv("TEAMS_CHANNEL_ID", "")
+        if teams_url or (teams_group and teams_channel):
+            try:
+                self.teams = TeamsAlert(
+                    webhook_url=teams_url,
+                    group_id=teams_group,
+                    channel_id=teams_channel,
+                )
+                mode = "Graph API" if (teams_group and teams_channel) else "webhook"
+                logger.info("Teams alerts enabled (%s)", mode)
+            except ValueError as exc:
+                logger.warning("Teams setup failed: %s", exc)
+
     @property
     def has_channels(self) -> bool:
-        return self.discord is not None or self.email is not None
+        return self.discord is not None or self.email is not None or self.teams is not None
 
     def send_predictions(
         self,
@@ -75,6 +92,12 @@ class AlertManager:
             except Exception as exc:
                 logger.error("Email prediction alert failed: %s", exc)
 
+        if self.teams:
+            try:
+                self.teams.send_predictions(predictions, model_name, run_id)
+            except Exception as exc:
+                logger.error("Teams prediction alert failed: %s", exc)
+
     def send_daily_summary(
         self,
         stats: dict[str, Any],
@@ -93,6 +116,12 @@ class AlertManager:
             except Exception as exc:
                 logger.error("Email summary alert failed: %s", exc)
 
+        if self.teams:
+            try:
+                self.teams.send_daily_summary(stats, top_picks)
+            except Exception as exc:
+                logger.error("Teams summary alert failed: %s", exc)
+
     def send_alert(self, message: str) -> None:
         """Send a simple alert to all channels."""
         if self.discord:
@@ -106,3 +135,9 @@ class AlertManager:
                 self.email.send_alert("MLB GBSV Alert", message)
             except Exception as exc:
                 logger.error("Email alert failed: %s", exc)
+
+        if self.teams:
+            try:
+                self.teams.send_alert(message)
+            except Exception as exc:
+                logger.error("Teams alert failed: %s", exc)
