@@ -30,6 +30,7 @@ from scipy.stats import poisson, skellam
 # ── project imports ──────────────────────────────────────────────────────
 from mlbv1.config import AppConfig
 from mlbv1.data.loader import OddsAPILoader
+from mlbv1.data.historical_enrichment import enrich_training_data_with_historical_sources
 from mlbv1.data.preprocessor import preprocess
 from mlbv1.features.engineer import engineer_features
 from mlbv1.models.market_deriver import MarketDeriver
@@ -601,6 +602,13 @@ def main() -> None:
     model_input = games_df.groupby(
         ["home_team", "away_team"], sort=False
     ).first().reset_index()
+
+    # Enrich with probable pitcher stats + Lahman
+    logger.info("Enriching with historical data (probable pitchers + Lahman)...")
+    model_input = enrich_training_data_with_historical_sources(
+        model_input, include_lahman=True, include_statcast=False,
+        include_probable_pitchers=True, target_date=today,
+    )
 
     processed = preprocess(model_input)
     features = engineer_features(

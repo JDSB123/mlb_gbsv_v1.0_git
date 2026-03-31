@@ -30,6 +30,7 @@ from mlbv1.data.loader import (
     SyntheticDataLoader,
     WeatherEnricher,
 )
+from mlbv1.data.historical_enrichment import enrich_training_data_with_historical_sources
 from mlbv1.data.preprocessor import ProcessedData, preprocess, train_test_split_time
 from mlbv1.features.engineer import FeatureSet, engineer_features
 from mlbv1.metrics import evaluate
@@ -105,6 +106,13 @@ def main() -> None:
             enricher = WeatherEnricher(weather_key)
             train_df = enricher.enrich(train_df)
 
+        # Enrich with Lahman pitcher stats + Statcast advanced metrics
+        logger.info("=== Step 2b: Enriching with historical data (Lahman + Statcast) ===")
+        train_df = enrich_training_data_with_historical_sources(
+            train_df, include_lahman=True, include_statcast=False,
+            include_probable_pitchers=False,
+        )
+
         processed = preprocess(train_df)
         features = engineer_features(
             processed.features,
@@ -125,6 +133,13 @@ def main() -> None:
         if today_df.empty:
             logger.info("No games today \u2014 skipping predictions")
             return
+
+        # Enrich today's games with probable pitcher stats + Lahman
+        today_str = datetime.now(tz=UTC).strftime("%Y-%m-%d")
+        today_df = enrich_training_data_with_historical_sources(
+            today_df, include_lahman=True, include_statcast=False,
+            include_probable_pitchers=True, target_date=today_str,
+        )
 
         today_processed = preprocess(today_df)
         today_features = engineer_features(today_processed.features)

@@ -20,6 +20,7 @@ from mlbv1.data.loader import (
     OddsAPILoader,
     SyntheticDataLoader,
 )
+from mlbv1.data.historical_enrichment import enrich_training_data_with_historical_sources
 from mlbv1.data.preprocessor import preprocess, train_test_split_time
 from mlbv1.features.engineer import engineer_features
 from mlbv1.metrics import evaluate
@@ -100,6 +101,13 @@ def main() -> None:
     logger.info("Loading data with %s …", type(loader).__name__)
     df = loader.load()
     logger.info("Loaded %d rows", len(df))
+
+    # Enrich with Lahman pitcher stats (Statcast off by default — too slow)
+    logger.info("Enriching with historical data (Lahman)...")
+    df = enrich_training_data_with_historical_sources(
+        df, include_lahman=True, include_statcast=False,
+        include_probable_pitchers=False,
+    )
 
     processed = preprocess(df)
     features = engineer_features(

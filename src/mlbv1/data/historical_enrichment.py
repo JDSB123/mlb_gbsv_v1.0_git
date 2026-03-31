@@ -4,9 +4,14 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
+from urllib.error import URLError
+from urllib.request import urlopen
 
 import pandas as pd
+
+from mlbv1.data.mapping import normalize_team
 
 logger = logging.getLogger(__name__)
 
@@ -315,11 +320,6 @@ class RetroSheetEnricher:
     def download_retrosheet(year: int) -> pd.DataFrame:
         """Download and parse Retrosheet event files."""
         try:
-            # Retrosheet requires manual download or special parsing
-            # For now, return empty; integration would require:
-            # 1. Download .EVN files from retrosheet.org
-            # 2. Parse using chadwick or custom parser
-            # 3. Aggregate to game level
             logger.info(f"Retrosheet parsing not yet implemented for {year}")
             return pd.DataFrame()
         except Exception as e:
@@ -327,22 +327,234 @@ class RetroSheetEnricher:
             return pd.DataFrame()
 
 
+class ProbablePitcherEnricher:
+    """Fetch today's probable starting pitchers from MLB Stats API and merge
+    their prior-season stats (ERA, wins) into games loaded from Odds API.
+
+    The MLB Stats API ``/schedule`` endpoint with ``hydrate=probablePitcher``
+    returns each game's announced starters including season stats.
+    """
+
+    MLB_API = "https://statsapi.mlb.com/api/v1"
+
+    @classmethod
+    def get_probable_pitchers(cls, date: str) -> pd.DataFrame:
+        """Return a DataFrame with one row per game for *date* (YYYY-MM-DD).
+
+        Columns: home_team, away_team, home_pitcher_name, away_pitcher_name,
+                 home_pitcher_era, away_pitcher_era, home_pitcher_wins, away_pitcher_wins,
+                 home_pitcher_id, away_pitcher_id
+        """
+        url = (
+            f"{cls.MLB_API}/schedule?sportId=1&date={date}"
+            "&hydrate=probablePitcher(note)"
+        )
+        try:
+            with urlopen(url, timeout=15) as resp:  # noqa: S310
+                data = json.loads(resp.read())
+        except (URLError, OSError, json.JSONDecodeError) as exc:
+            logger.warning("Could not fetch probable pitchers for %s: %s", date, exc)
+            return pd.DataFrame()
+
+        rows: list[dict] = []
+        for date_entry in data.get("dates", []):
+            for game in date_entry.get("games", []):
+                teams = game.get("teams", {})
+                home_info = teams.get("home", {})
+                away_info = teams.get("away", {})
+
+                home_abbr = normalize_team(
+                    home_info.get("team", {}).get("abbreviation", "")
+                    or home_info.get("team", {}).get("name", "")
+                )
+                away_abbr = normalize_team(
+                    away_info.get("team", {}).get("abbreviation", "")
+                    or away_info.get("team", {}).get("name", "")
+                )
+
+                hp = home_info.get("probablePitcher", {})
+                ap = away_info.get("probablePitcher", {})
+
+                rows.append({
+                    "home_team": home_abbr,
+                    "away_team": away_abbr,
+                    "home_pitcher_name": hp.get("fullName", ""),
+                    "away_pitcher_name": ap.get("fullName", ""),
+                    "home_pitcher_id": hp.get("id"),
+                    "away_pitcher_id": ap.get("id"),
+                })
+
+        if not rows:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(rows)
+
+        # Now look up each pitcher's prior-season stats via pybaseball
+        df = cls._attach_pitcher_season_stats(df)
+        return df
+
+    @classmethod
+    def _attach_pitcher_season_stats(cls, df: pd.DataFrame) -> pd.DataFrame:
+        """Look up prior-season ERA/wins for each pitcher via pybaseball."""
+        try:
+            from pybaseball import pitching_stats
+        except ImportError:
+            logger.warning("pybaseball not installed — can't look up pitcher stats")
+            df["home_pitcher_era"] = 0.0
+            df["away_pitcher_era"] = 0.0
+            df["home_pitcher_wins"] = 0.0
+            df["away_pitcher_wins"] = 0.0
+            return df
+
+        # Fetch last 2 seasons to find most recent stats
+        all_stats = pd.DataFrame()
+        for year in [2025, 2024]:
+            try:
+                season = pitching_stats(year, qual=0)
+                if season is not None and not season.empty:
+                    season = season[["Name", "ERA", "W", "IP"]].copy()
+                    season["year"] = year
+                    all_stats = pd.concat([all_stats, season], ignore_index=True)
+            except Exception as exc:
+                logger.debug("Could not fetch %d pitching stats: %s", year, exc)
+
+        if all_stats.empty:
+            logger.warning("No pitching stats available from pybaseball")
+            df["home_pitcher_era"] = 0.0
+            df["away_pitcher_era"] = 0.0
+            df["home_pitcher_wins"] = 0.0
+            df["away_pitcher_wins"] = 0.0
+            return df
+
+        # Keep most recent year per pitcher, prefer most innings
+        all_stats = all_stats.sort_values(
+            ["year", "IP"], ascending=[False, False]
+        ).drop_duplicates(subset=["Name"], keep="first")
+
+        # Build lookup by name
+        stats_lookup = {}
+        for _, row in all_stats.iterrows():
+            name = str(row["Name"]).strip()
+            stats_lookup[name] = {
+                "era": float(row["ERA"]) if pd.notna(row["ERA"]) else 0.0,
+                "wins": float(row["W"]) if pd.notna(row["W"]) else 0.0,
+            }
+
+        def _lookup(pitcher_name: str, stat: str) -> float:
+            if not pitcher_name:
+                return 0.0
+            info = stats_lookup.get(pitcher_name)
+            if info:
+                return info[stat]
+            # Try partial match (last name)
+            last = pitcher_name.rsplit(" ", 1)[-1].lower()
+            for name, info in stats_lookup.items():
+                if name.rsplit(" ", 1)[-1].lower() == last:
+                    # Ambiguous — skip
+                    candidates = [
+                        n for n in stats_lookup if n.rsplit(" ", 1)[-1].lower() == last
+                    ]
+                    if len(candidates) == 1:
+                        return stats_lookup[candidates[0]][stat]
+                    break
+            return 0.0
+
+        df["home_pitcher_era"] = df["home_pitcher_name"].apply(
+            lambda n: _lookup(n, "era")
+        )
+        df["away_pitcher_era"] = df["away_pitcher_name"].apply(
+            lambda n: _lookup(n, "era")
+        )
+        df["home_pitcher_wins"] = df["home_pitcher_name"].apply(
+            lambda n: _lookup(n, "wins")
+        )
+        df["away_pitcher_wins"] = df["away_pitcher_name"].apply(
+            lambda n: _lookup(n, "wins")
+        )
+
+        matched_home = (df["home_pitcher_era"] > 0).sum()
+        matched_away = (df["away_pitcher_era"] > 0).sum()
+        logger.info(
+            "Probable pitcher stats: %d/%d home, %d/%d away matched from pybaseball",
+            matched_home, len(df), matched_away, len(df),
+        )
+        return df
+
+    @classmethod
+    def enrich_games_with_probable_pitchers(
+        cls,
+        games_df: pd.DataFrame,
+        date: str,
+    ) -> pd.DataFrame:
+        """Merge probable pitcher stats into games by matching team abbreviations."""
+        pitchers = cls.get_probable_pitchers(date)
+        if pitchers.empty:
+            logger.info("No probable pitchers available for %s", date)
+            return games_df
+
+        df = games_df.copy()
+        pitcher_cols = [
+            "home_pitcher_name", "away_pitcher_name",
+            "home_pitcher_era", "away_pitcher_era",
+            "home_pitcher_wins", "away_pitcher_wins",
+            "home_pitcher_id", "away_pitcher_id",
+        ]
+
+        # Merge on (home_team, away_team) — both sides use normalized abbreviations
+        merged = df.merge(
+            pitchers[["home_team", "away_team"] + pitcher_cols],
+            on=["home_team", "away_team"],
+            how="left",
+            suffixes=("_orig", ""),
+        )
+
+        # Use new pitcher data where available, keep originals as fallback
+        for col in pitcher_cols:
+            orig_col = f"{col}_orig"
+            if orig_col in merged.columns:
+                merged[col] = merged[col].combine_first(merged[orig_col])
+                merged.drop(columns=[orig_col], inplace=True)
+            elif col not in merged.columns:
+                merged[col] = 0.0
+
+        logger.info(
+            "Enriched %d games with probable pitcher data for %s", len(merged), date
+        )
+        return merged
+
+
 def enrich_training_data_with_historical_sources(
     games_df: pd.DataFrame,
     include_lahman: bool = True,
-    include_statcast: bool = True,
+    include_statcast: bool = False,
     include_retrosheet: bool = False,
+    include_probable_pitchers: bool = True,
+    target_date: str | None = None,
 ) -> pd.DataFrame:
     """
     Comprehensive data enrichment using authoritative historical sources.
 
     This combines:
     - Current game data (games_df)
+    - Probable pitchers from MLB Stats API + pybaseball season stats (ERA, wins)
     - Lahman pitcher/team stats (actual ERAs, wins, etc.)
     - Statcast advanced metrics (exit velo, launch angle, barrel %, xwOBA)
+      NOTE: Statcast is OFF by default — fetching 3 years of pitch-by-pitch
+      data takes 30+ minutes. Enable for offline training only.
     - Retrosheet play-by-play (opt-in, complex)
     """
     df = games_df.copy()
+
+    # Probable pitchers — fastest, most impactful for today's predictions
+    if include_probable_pitchers and target_date:
+        try:
+            logger.info("Enriching with probable pitcher stats for %s...", target_date)
+            df = ProbablePitcherEnricher.enrich_games_with_probable_pitchers(
+                df, target_date
+            )
+            logger.info("✓ Probable pitcher enrichment complete")
+        except Exception as e:
+            logger.warning(f"Probable pitcher enrichment failed: {e}")
 
     if include_lahman:
         try:

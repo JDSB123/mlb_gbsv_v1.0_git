@@ -25,6 +25,9 @@ RUN pip install --no-cache-dir --upgrade pip \
 COPY --chown=mlbuser:mlbuser src /app/src
 COPY --chown=mlbuser:mlbuser scripts /app/scripts
 
+# Copy trained model artifacts
+COPY --chown=mlbuser:mlbuser artifacts/models/ /app/artifacts/models/
+
 # Set Python path
 ENV PYTHONPATH=/app/src
 

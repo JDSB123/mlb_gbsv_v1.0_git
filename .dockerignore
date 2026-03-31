@@ -1,6 +1,5 @@
 __pycache__/
 *.py[cod]
-*.pkl
 *.joblib
 *.egg-info/
 .venv/
@@ -12,6 +11,8 @@ venv/
 .github/
 .vscode/
 .idea/
-artifacts/
+artifacts/test_models/
+artifacts/picks_*
+artifacts/tracking.db
 data/
 logs/
