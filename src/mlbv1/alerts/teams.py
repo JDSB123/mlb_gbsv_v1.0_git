@@ -501,6 +501,11 @@ class TeamsAlert:
                 logger.warning("Teams Graph API returned %d", resp.status)
                 return False
         except urllib.error.HTTPError as exc:
+            body = ""
+            try:
+                body = exc.read().decode("utf-8", errors="replace")[:500]
+            except Exception:
+                pass
             # Token expired — try refreshing once
             if exc.code == 401 and self._graph_token:
                 self._graph_token = _get_graph_token()
@@ -512,7 +517,7 @@ class TeamsAlert:
                                 return True
                     except Exception:
                         pass
-            logger.error("Teams Graph API error %d: %s", exc.code, exc.reason)
+            logger.error("Teams Graph API error %d: %s — %s", exc.code, exc.reason, body)
             return False
         except Exception as exc:
             logger.error("Teams Graph API failed: %s", exc)

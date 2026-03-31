@@ -256,7 +256,7 @@ def api_slate_teams() -> ResponseReturnValue:
         ok = alert.send_slate(rows, target_date, slate_url=slate_url)
         if ok:
             return jsonify({"status": "ok", "message": "Posted to Teams"}), 200
-        return jsonify({"status": "error", "message": "Teams webhook returned non-200"}), 502
+        return jsonify({"status": "error", "message": "Teams posting failed — check server logs for Graph API error details"}), 502
     except Exception as exc:
         logger.exception("Teams post failed: %s", exc)
         return jsonify({"status": "error", "message": str(exc)}), 500
