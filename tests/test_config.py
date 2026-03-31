@@ -17,7 +17,7 @@ class TestAppConfig:
             "all",
             "both",
             "random_forest",
-            "logistic_regression",
+            "ridge_regression",
             "xgboost",
             "lightgbm",
         )
@@ -68,4 +68,4 @@ class TestModelConfig:
         mc = ModelConfig()
         assert mc.type == "all"
         assert mc.random_forest.n_estimators == 300
-        assert mc.logistic_regression.C == 1.0
+        assert mc.ridge_regression.C == 1.0

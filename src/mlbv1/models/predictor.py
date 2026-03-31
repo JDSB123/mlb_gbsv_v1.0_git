@@ -50,19 +50,9 @@ def predict(
         logger.warning("Anomaly Detected: Input features contain missing data.")
         features = features.fillna(0)
 
-    if isinstance(model, EnsembleModel):
-        # Base ensemble currently returns average regression arrays assuming base regressors
-        preds = pd.DataFrame(
-            model.predict(features), index=X.index, columns=model.target_names
-        )
-    else:
-        if model.scaler:
-            features = pd.DataFrame(
-                model.scaler.transform(features), columns=model.feature_names
-            )
-        preds = pd.DataFrame(
-            model.model.predict(features), index=X.index, columns=model.target_names
-        )
+    preds = pd.DataFrame(
+        model.predict(features), index=X.index, columns=model.target_names
+    )
 
     # Ensure no negative runs predicted (ReLU)
     preds = preds.clip(lower=0.01)
@@ -78,7 +68,7 @@ def predict(
 
     # Anomaly Detection: Probability bounds check globally across the output DataFrame
     numeric_cols = market_probs.select_dtypes(include=[np.number]).columns
-    market_probs[numeric_cols] = market_probs[numeric_cols].clip(lower=0.01, upper=0.99)
+    market_probs[numeric_cols] = market_probs[numeric_cols].clip(lower=0.005, upper=0.995)
 
     return PredictionResult(expected_runs=preds, market_probabilities=market_probs)
 

@@ -136,9 +136,10 @@ def build_targets(df: pd.DataFrame) -> pd.DataFrame:
                 f5_total > pd.to_numeric(df["f5_total_runs"], errors="coerce").fillna(0)
             ).astype(int)
     else:
-        # Fallback if F5 data is missing, just use half of full game to avoid breaking
-        targets["f5_home_score"] = targets["home_score"] / 2.0
-        targets["f5_away_score"] = targets["away_score"] / 2.0
+        # Fallback if F5 data is missing: ~58% of runs score in innings 1-5
+        # (MLB historical average), not a flat 50%.
+        targets["f5_home_score"] = (targets["home_score"] * 0.58).round()
+        targets["f5_away_score"] = (targets["away_score"] * 0.58).round()
 
     return targets
 

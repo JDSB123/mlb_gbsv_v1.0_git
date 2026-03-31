@@ -5,6 +5,7 @@ from __future__ import annotations
 import random
 from datetime import UTC, datetime, timedelta
 
+import numpy as np
 import pandas as pd
 
 
@@ -47,6 +48,7 @@ class SyntheticHistoryGenerator:
 
     def __init__(self, seed: int = 42) -> None:
         random.seed(seed)
+        self._rng = np.random.default_rng(seed)
 
     def generate_seasons(self, years: list[int] | None = None) -> pd.DataFrame:
         """Generate synthetic games for specified years (default: 2023-2025)."""
@@ -120,20 +122,40 @@ class SyntheticHistoryGenerator:
                 home_stats = team_stats[home_team]
                 away_stats = team_stats[away_team]
 
-                # Simulate home win with home team's advantage
-                home_win_prob = home_stats["home_win_rate"]
-                home_wins = random.random() < home_win_prob
+                # Generate per-inning scores using Poisson (realistic baseball distribution)
+                home_inning_mu = home_stats["runs_per_game"] / 9.0
+                away_inning_mu = away_stats["runs_per_game"] / 9.0
+                home_innings = self._rng.poisson(home_inning_mu, size=9)
+                away_innings = self._rng.poisson(away_inning_mu, size=9)
 
-                # Generate scores
-                home_score = self._generate_score(
-                    home_stats["runs_per_game"], is_winner=home_wins
-                )
-                away_score = self._generate_score(
-                    away_stats["runs_per_game"], is_winner=not home_wins
-                )
+                home_score = int(home_innings.sum())
+                away_score = int(away_innings.sum())
 
-                # Spread (typically -110 both ways; home favorite bias)
-                spread = random.uniform(-2.5, 1.5)
+                # Ensure no ties (baseball plays extras)
+                while home_score == away_score:
+                    if random.random() < home_stats["home_win_rate"]:
+                        home_score += 1
+                    else:
+                        away_score += 1
+
+                # F5 scores: first 5 innings
+                f5_home_score = int(home_innings[:5].sum())
+                f5_away_score = int(away_innings[:5].sum())
+
+                # Spread (realistic MLB line: typically -1.5 to +1.5)
+                if home_stats["runs_per_game"] > away_stats["runs_per_game"]:
+                    spread = round(random.uniform(-2.0, -0.5), 1)
+                else:
+                    spread = round(random.uniform(0.5, 2.0), 1)
+
+                # Generate total line near actual total
+                total_runs = float(home_score + away_score)
+                total_line = round(total_runs + random.uniform(-2.0, 2.0), 1)
+
+                # Generate moneylines reflecting team strength
+                strength_diff = (home_stats["runs_per_game"] - away_stats["runs_per_game"])
+                home_ml = int(-110 - strength_diff * 30)
+                away_ml = int(-110 + strength_diff * 30)
 
                 records.append(
                     {
@@ -142,9 +164,12 @@ class SyntheticHistoryGenerator:
                         "away_team": away_team,
                         "home_score": home_score,
                         "away_score": away_score,
+                        "f5_home_score": f5_home_score,
+                        "f5_away_score": f5_away_score,
                         "spread": spread,
-                        "home_moneyline": -110,
-                        "away_moneyline": -110,
+                        "home_moneyline": home_ml,
+                        "away_moneyline": away_ml,
+                        "total_runs": total_line,
                         "home_pitcher_era": home_stats["pitcher_era"],
                         "away_pitcher_era": away_stats["pitcher_era"],
                         "home_pitcher_wins": home_stats["pitcher_wins"],
@@ -159,18 +184,6 @@ class SyntheticHistoryGenerator:
             )  # More games on some days
 
         return records
-
-    @staticmethod
-    def _generate_score(runs_per_game_avg: float, is_winner: bool = False) -> int:
-        """Generate a realistic baseball score."""
-        # Poisson-like distribution (MLB avg ~4.3 runs/game)
-        base_runs = max(0, int(random.gauss(runs_per_game_avg, 2.0)))
-
-        # Winners typically score slightly more
-        if is_winner:
-            base_runs += random.choice([0, 1, 1])
-
-        return max(0, base_runs)
 
 
 def enrich_current_data_with_history(

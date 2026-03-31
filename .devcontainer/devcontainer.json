@@ -1,9 +1,10 @@
 {
     "name": "MLB Predictor",
-    "image": "mcr.microsoft.com/devcontainers/python:3.11",
+    "image": "mcr.microsoft.com/devcontainers/python:3.12",
     "features": {
         "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
     },
+    "runArgs": ["--env-file", ".env"],
     "customizations": {
         "vscode": {
             "settings": {

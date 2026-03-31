@@ -251,7 +251,7 @@ def _train_and_save(
     test_y = processed.target.loc[test_df.index]
 
     trainer = ModelTrainer(output_dir="artifacts/models")
-    model_types = ["random_forest", "logistic_regression", "xgboost", "lightgbm"]
+    model_types = ["random_forest", "ridge_regression", "xgboost", "lightgbm"]
 
     for model_type in model_types:
         try:
@@ -259,9 +259,9 @@ def _train_and_save(
                 trained = trainer.train_random_forest(
                     train_X, train_y, config.model.random_forest
                 )
-            elif model_type == "logistic_regression":
-                trained = trainer.train_logistic_regression(
-                    train_X, train_y, config.model.logistic_regression
+            elif model_type == "ridge_regression":
+                trained = trainer.train_ridge_regression(
+                    train_X, train_y, config.model.ridge_regression
                 )
             elif model_type == "xgboost":
                 trained = trainer.train_xgboost(train_X, train_y, config.model.xgboost)

@@ -51,8 +51,8 @@ class TestEndToEndPipeline:
         config = AppConfig.load()
         trainer = ModelTrainer(output_dir=str(tmp_path / "models"))
 
-        trained = trainer.train_logistic_regression(
-            features.X, processed.target, config.model.logistic_regression
+        trained = trainer.train_ridge_regression(
+            features.X, processed.target, config.model.ridge_regression
         )
         result = predict(trained, features.X)
         metrics = evaluate(processed.target, result.expected_runs)

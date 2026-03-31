@@ -13,12 +13,13 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_squared_error
 from sklearn.multioutput import MultiOutputRegressor
+from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
 from mlbv1.config import (
     LightGBMConfig,
-    LogisticRegressionConfig,
     RandomForestConfig,
+    RidgeRegressionConfig,
     XGBoostConfig,
 )
 
@@ -37,6 +38,17 @@ class TrainedModel:
     scaler: StandardScaler | None
     feature_names: list[str]
     target_names: list[str]
+
+    def predict(self, X: pd.DataFrame) -> Any:
+        """Predict using the trained feature schema and optional scaler."""
+        features = X[self.feature_names]
+        if self.scaler is not None:
+            features = pd.DataFrame(
+                self.scaler.transform(features),
+                columns=self.feature_names,
+                index=features.index,
+            )
+        return self.model.predict(features)
 
 class ModelTrainer:
     """Train scikit-learn / xgboost / lightgbm multi-target regressors."""
@@ -78,32 +90,34 @@ class ModelTrainer:
         )
 
     # ------------------------------------------------------------------
-    # Ridge Regression (Replacing Logistic)
+    # Ridge Regression
     # ------------------------------------------------------------------
-    def train_logistic_regression(
-        self, X: pd.DataFrame, y: Any, config: LogisticRegressionConfig
+    def train_ridge_regression(
+        self, X: pd.DataFrame, y: Any, config: RidgeRegressionConfig
     ) -> TrainedModel:
-        # We rename the method technically, but keep the name backwards compatible so train.py doesnt break
         y_multi = self._prepare_targets(y)
-        scaler = StandardScaler()
-        X_scaled = pd.DataFrame(
-            scaler.fit_transform(X), columns=X.columns, index=X.index
-        )
-        # Using Ridge instead of Logistic Regression for continuous target
         base_model = Ridge(
             alpha=1.0 / (config.C + 1e-6),  # C is inverse of regularization strength
             max_iter=config.max_iter,
             random_state=config.random_state,
         )
-        model = MultiOutputRegressor(base_model)
-        model.fit(X_scaled, y_multi)
+        model = Pipeline(
+            [
+                ("scaler", StandardScaler()),
+                ("regressor", MultiOutputRegressor(base_model)),
+            ]
+        )
+        model.fit(X, y_multi)
         return TrainedModel(
-            name="logistic_regression", # Keep legacy name
+            name="ridge_regression",
             model=model,
-            scaler=scaler,
+            scaler=None,
             feature_names=list(X.columns),
             target_names=self.target_names,
         )
+
+    # Backward-compatible alias
+    train_logistic_regression = train_ridge_regression
 
     # ------------------------------------------------------------------
     # XGBoost
@@ -120,7 +134,13 @@ class ModelTrainer:
             learning_rate=config.learning_rate,
             subsample=config.subsample,
             colsample_bytree=config.colsample_bytree,
+            min_child_weight=config.min_child_weight,
+            gamma=config.gamma,
+            reg_alpha=config.reg_alpha,
+            reg_lambda=config.reg_lambda,
             random_state=config.random_state,
+            use_label_encoder=config.use_label_encoder,
+            eval_metric=config.eval_metric,
             objective="reg:squarederror", # appropriate for counts
         )
         model = MultiOutputRegressor(base_model)
@@ -148,7 +168,12 @@ class ModelTrainer:
             learning_rate=config.learning_rate,
             subsample=config.subsample,
             colsample_bytree=config.colsample_bytree,
+            min_child_samples=config.min_child_samples,
+            reg_alpha=config.reg_alpha,
+            reg_lambda=config.reg_lambda,
+            num_leaves=config.num_leaves,
             random_state=config.random_state,
+            verbose=config.verbose,
             objective="regression",
         )
         model = MultiOutputRegressor(base_model)
@@ -166,16 +191,7 @@ class ModelTrainer:
     ) -> float:
         """Evaluate model returning negative MSE as 'accuracy' for compatibility, or an R2 score."""
         y_multi = self._prepare_targets(y)
-        if trained.scaler:
-            X_test = pd.DataFrame(
-                trained.scaler.transform(X),
-                columns=trained.feature_names,
-                index=X.index,
-            )
-            preds = trained.model.predict(X_test)
-        else:
-            preds = trained.model.predict(X)
-
+        preds = trained.predict(X)
         mse = mean_squared_error(y_multi, preds)
         
         logger.info("%s evaluation MSE: %.3f", trained.name, mse)

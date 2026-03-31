@@ -3,11 +3,14 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import pandas as pd
 
 from mlbv1.data.mapping import get_stadium_info
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -29,12 +32,15 @@ def engineer_features(
     data["away_win"] = (data["away_score"] > data["home_score"]).astype(int)
 
     # Pitcher-level features (ERA, wins)
+    _defaults_used: list[str] = []
+
     if "home_pitcher_era" in data.columns:
         data["home_pitcher_era"] = pd.to_numeric(
             data["home_pitcher_era"], errors="coerce"
         ).fillna(0.0)
     else:
         data["home_pitcher_era"] = 0.0
+        _defaults_used.append("home_pitcher_era")
 
     if "away_pitcher_era" in data.columns:
         data["away_pitcher_era"] = pd.to_numeric(
@@ -42,6 +48,7 @@ def engineer_features(
         ).fillna(0.0)
     else:
         data["away_pitcher_era"] = 0.0
+        _defaults_used.append("away_pitcher_era")
 
     if "home_pitcher_wins" in data.columns:
         data["home_pitcher_wins"] = pd.to_numeric(
@@ -49,6 +56,7 @@ def engineer_features(
         ).fillna(0.0)
     else:
         data["home_pitcher_wins"] = 0.0
+        _defaults_used.append("home_pitcher_wins")
 
     if "away_pitcher_wins" in data.columns:
         data["away_pitcher_wins"] = pd.to_numeric(
@@ -56,6 +64,7 @@ def engineer_features(
         ).fillna(0.0)
     else:
         data["away_pitcher_wins"] = 0.0
+        _defaults_used.append("away_pitcher_wins")
 
     data["pitcher_era_diff"] = data["home_pitcher_era"] - data["away_pitcher_era"]
     data["pitcher_wins_diff"] = data["home_pitcher_wins"] - data["away_pitcher_wins"]
@@ -98,9 +107,13 @@ def engineer_features(
     # Runs differential
     data["runs_diff_short"] = data["home_runs_avg_short"] - data["away_runs_avg_short"]
 
-    # Moneyline-implied probability
-    data["home_implied_prob"] = data["home_moneyline"].apply(_ml_to_implied_prob)
-    data["away_implied_prob"] = data["away_moneyline"].apply(_ml_to_implied_prob)
+    # Moneyline-implied probability (devigged for true probability)
+    home_raw = data["home_moneyline"].apply(_ml_to_implied_prob)
+    away_raw = data["away_moneyline"].apply(_ml_to_implied_prob)
+    # Remove bookmaker vig: normalize so home + away = 1.0
+    total_imp = home_raw + away_raw
+    data["home_implied_prob"] = home_raw / total_imp
+    data["away_implied_prob"] = away_raw / total_imp
 
     data["rest_days_home"] = _rest_days(data, "home_team")
     data["rest_days_away"] = _rest_days(data, "away_team")
@@ -137,6 +150,7 @@ def engineer_features(
         ).fillna(88.8)
     else:
         data["launch_speed_mean"] = 88.8
+        _defaults_used.append("launch_speed_mean=88.8")
 
     if "launch_speed_max" in data.columns:
         data["launch_speed_max"] = pd.to_numeric(
@@ -144,6 +158,7 @@ def engineer_features(
         ).fillna(95.0)
     else:
         data["launch_speed_max"] = 95.0
+        _defaults_used.append("launch_speed_max=95.0")
 
     if "launch_angle_mean" in data.columns:
         data["launch_angle_mean"] = pd.to_numeric(
@@ -151,6 +166,7 @@ def engineer_features(
         ).fillna(12.5)
     else:
         data["launch_angle_mean"] = 12.5
+        _defaults_used.append("launch_angle_mean=12.5")
 
     if "estimated_ba_using_speedangle_mean" in data.columns:
         data["estimated_ba_using_speedangle_mean"] = pd.to_numeric(
@@ -158,6 +174,7 @@ def engineer_features(
         ).fillna(0.265)
     else:
         data["estimated_ba_using_speedangle_mean"] = 0.265
+        _defaults_used.append("est_BA=0.265")
 
     if "estimated_woba_using_speedangle_mean" in data.columns:
         data["estimated_woba_using_speedangle_mean"] = pd.to_numeric(
@@ -165,6 +182,7 @@ def engineer_features(
         ).fillna(0.330)
     else:
         data["estimated_woba_using_speedangle_mean"] = 0.330
+        _defaults_used.append("est_wOBA=0.330")
 
     if ("barrel", "sum") in data.columns:
         data["barrels_per_game"] = pd.to_numeric(
@@ -172,6 +190,10 @@ def engineer_features(
         ).fillna(25)
     elif "barrels_per_game" not in data.columns:
         data["barrels_per_game"] = 25
+        _defaults_used.append("barrels_per_game=25")
+
+    if _defaults_used:
+        logger.info("Feature defaults used (data not available): %s", ", ".join(_defaults_used))
 
     feature_cols = [
         "home_win_rate_short",

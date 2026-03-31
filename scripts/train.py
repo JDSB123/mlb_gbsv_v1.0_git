@@ -23,12 +23,13 @@ from mlbv1.data.loader import (
 from mlbv1.data.preprocessor import preprocess, train_test_split_time
 from mlbv1.features.engineer import engineer_features
 from mlbv1.metrics import evaluate
+from mlbv1.models.predictor import load_model
 from mlbv1.models.trainer import ModelTrainer
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-ALL_MODELS = ("random_forest", "logistic_regression", "xgboost", "lightgbm")
+ALL_MODELS = ("random_forest", "ridge_regression", "xgboost", "lightgbm")
 
 
 def _save_ensemble(model: Any, output_dir: Path) -> Path:
@@ -79,7 +80,7 @@ def main() -> None:
         "--model",
         type=str,
         default=None,
-        help="Model type: random_forest, logistic_regression, xgboost, lightgbm, all",
+        help="Model type: random_forest, ridge_regression, xgboost, lightgbm, all",
     )
     parser.add_argument(
         "--tune", action="store_true", help="Enable GridSearchCV tuning"
@@ -115,36 +116,40 @@ def main() -> None:
 
     trainer = ModelTrainer()
     model_type = config.model.type
+    trained_models: dict[str, Any] = {}
 
     # Standard training
     if model_type in {"random_forest", "all"}:
         rf = trainer.train_random_forest(
             train_features, train_target, config.model.random_forest
         )
+        trained_models[rf.name] = rf
         trainer.save(rf)
         acc = trainer.evaluate(rf, test_features, test_target)
-        preds = rf.model.predict(test_features)  # type: ignore
+        preds = rf.predict(test_features)
         m = evaluate(test_target, preds)
         logger.info("RF  acc=%.3f  ROI=%.3f  Sharpe=%.3f", acc, m.roi, m.sharpe_ratio)
 
-    if model_type in {"logistic_regression", "all"}:
-        lr = trainer.train_logistic_regression(
-            train_features, train_target, config.model.logistic_regression
+    if model_type in {"ridge_regression", "all"}:
+        lr = trainer.train_ridge_regression(
+            train_features, train_target, config.model.ridge_regression
         )
+        trained_models[lr.name] = lr
         trainer.save(lr)
         acc = trainer.evaluate(lr, test_features, test_target)
-        preds = lr.model.predict(lr.scaler.transform(test_features))  # type: ignore[union-attr]
+        preds = lr.predict(test_features)
         m = evaluate(test_target, preds)
-        logger.info("LR  acc=%.3f  ROI=%.3f  Sharpe=%.3f", acc, m.roi, m.sharpe_ratio)
+        logger.info("Ridge acc=%.3f  ROI=%.3f  Sharpe=%.3f", acc, m.roi, m.sharpe_ratio)
 
     if model_type in {"xgboost", "all"}:
         try:
             xgb = trainer.train_xgboost(
                 train_features, train_target, config.model.xgboost
             )
+            trained_models[xgb.name] = xgb
             trainer.save(xgb)
             acc = trainer.evaluate(xgb, test_features, test_target)
-            preds = xgb.model.predict(test_features)  # type: ignore
+            preds = xgb.predict(test_features)
             m = evaluate(test_target, preds)
             logger.info(
                 "XGB acc=%.3f  ROI=%.3f  Sharpe=%.3f", acc, m.roi, m.sharpe_ratio
@@ -157,9 +162,10 @@ def main() -> None:
             lgbm = trainer.train_lightgbm(
                 train_features, train_target, config.model.lightgbm
             )
+            trained_models[lgbm.name] = lgbm
             trainer.save(lgbm)
             acc = trainer.evaluate(lgbm, test_features, test_target)
-            preds = lgbm.model.predict(test_features)  # type: ignore
+            preds = lgbm.predict(test_features)
             m = evaluate(test_target, preds)
             logger.info(
                 "LGBM acc=%.3f  ROI=%.3f  Sharpe=%.3f", acc, m.roi, m.sharpe_ratio
@@ -172,17 +178,19 @@ def main() -> None:
         import contextlib
 
         from mlbv1.models.ensemble import EnsembleTrainer
-        from mlbv1.models.predictor import load_model
 
-        loaded_models = []
+        loaded_models: list[Any] = list(trained_models.values())
         for name in ALL_MODELS:
+            if name in trained_models:
+                continue
             with contextlib.suppress(FileNotFoundError):
-                loaded_models.append(load_model(f"artifacts/models/{name}.pkl"))
+                loaded_model = load_model(f"artifacts/models/{name}.pkl")
+                if hasattr(loaded_model, "model"):
+                    loaded_models.append(loaded_model)
         if len(loaded_models) >= 2:
             et = EnsembleTrainer()
-            # Convert TrainedModel -> (name, classifier) tuples
             base_pairs: list[tuple[str, Any]] = [
-                (m.name, getattr(m, "model", m)) for m in loaded_models
+                (m.name, m.model) for m in loaded_models
             ]
             feature_names = list(train_features.columns)
 
@@ -219,16 +227,7 @@ def main() -> None:
             model_path = trainer.output_dir / f"{name}.pkl"
             if model_path.exists():
                 model = load_model(str(model_path))
-                # Evaluate on test set
-                if hasattr(model, "scaler") and model.scaler:
-                    scaled = model.scaler.transform(test_features)
-                    preds = (
-                        model.model.predict(scaled) 
-                        if hasattr(model, "model") 
-                        else model.predict(scaled)
-                    )
-                else:
-                    preds = model.predict(test_features)  # type: ignore
+                preds = model.predict(test_features)
 
                 # Check accuracy
                 from sklearn.metrics import mean_squared_error

@@ -58,12 +58,16 @@ class RandomForestConfig:
 
 
 @dataclass(frozen=True)
-class LogisticRegressionConfig:
-    """LogisticRegression model parameters."""
+class RidgeRegressionConfig:
+    """Ridge regression model parameters."""
 
-    C: float = 1.0
+    C: float = 1.0  # converted to alpha = 1/C in trainer
     max_iter: int = 2000
     random_state: int = 42
+
+
+# Backward-compatible alias
+LogisticRegressionConfig = RidgeRegressionConfig
 
 
 @dataclass(frozen=True)
@@ -144,9 +148,14 @@ class ModelConfig:
 
     type: str = "all"
     random_forest: RandomForestConfig = field(default_factory=RandomForestConfig)
-    logistic_regression: LogisticRegressionConfig = field(
-        default_factory=LogisticRegressionConfig
+    ridge_regression: RidgeRegressionConfig = field(
+        default_factory=RidgeRegressionConfig
     )
+
+    @property
+    def logistic_regression(self) -> RidgeRegressionConfig:
+        """Backward-compatible alias."""
+        return self.ridge_regression
     xgboost: XGBoostConfig = field(default_factory=XGBoostConfig)
     lightgbm: LightGBMConfig = field(default_factory=LightGBMConfig)
     tuning: TuningConfig = field(default_factory=TuningConfig)
@@ -184,9 +193,11 @@ class AppConfig:
     def _from_dict(payload: dict[str, Any]) -> AppConfig:
         data_cfg = DataConfig(**payload.get("data", {}))
         rf_cfg = RandomForestConfig(**payload.get("model", {}).get("random_forest", {}))
-        lr_cfg = LogisticRegressionConfig(
-            **payload.get("model", {}).get("logistic_regression", {})
+        # Accept both "ridge_regression" and legacy "logistic_regression" keys
+        rr_raw = payload.get("model", {}).get(
+            "ridge_regression", payload.get("model", {}).get("logistic_regression", {})
         )
+        rr_cfg = RidgeRegressionConfig(**rr_raw) if rr_raw else RidgeRegressionConfig()
         xgb_raw = payload.get("model", {}).get("xgboost", {})
         xgb_cfg = XGBoostConfig(**xgb_raw) if xgb_raw else XGBoostConfig()
         lgbm_raw = payload.get("model", {}).get("lightgbm", {})
@@ -196,7 +207,7 @@ class AppConfig:
         model_cfg = ModelConfig(
             type=payload.get("model", {}).get("type", "all"),
             random_forest=rf_cfg,
-            logistic_regression=lr_cfg,
+            ridge_regression=rr_cfg,
             xgboost=xgb_cfg,
             lightgbm=lgbm_cfg,
             tuning=tuning_cfg,
@@ -219,7 +230,7 @@ class AppConfig:
             "model": {
                 "type": self.model.type,
                 "random_forest": self.model.random_forest.__dict__,
-                "logistic_regression": self.model.logistic_regression.__dict__,
+                "ridge_regression": self.model.ridge_regression.__dict__,
                 "xgboost": self.model.xgboost.__dict__,
                 "lightgbm": self.model.lightgbm.__dict__,
                 "tuning": self.model.tuning.__dict__,

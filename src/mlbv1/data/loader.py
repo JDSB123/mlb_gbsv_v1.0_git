@@ -580,6 +580,9 @@ class MLBStatsAPILoader(BaseLoader):
         home_runs = linescore.get("teams", {}).get("home", {}).get("runs", 0)
         away_runs = linescore.get("teams", {}).get("away", {}).get("runs", 0)
 
+        # Extract F5 (first 5 innings) scores from linescore innings array
+        f5_home, f5_away = MLBStatsAPILoader._extract_f5_scores(linescore)
+
         # Extract pitcher stats if available
         decisions = game.get("decisions", {})
         home_pitcher = decisions.get("winner", {}) if "winner" in decisions else {}
@@ -605,6 +608,8 @@ class MLBStatsAPILoader(BaseLoader):
             ),
             "home_score": int(home_runs) if home_runs else 0,
             "away_score": int(away_runs) if away_runs else 0,
+            "f5_home_score": f5_home,
+            "f5_away_score": f5_away,
             "spread": 0.0,
             "home_moneyline": -110,
             "away_moneyline": -110,
@@ -617,6 +622,17 @@ class MLBStatsAPILoader(BaseLoader):
             "home_pitcher_name": home_pitcher_name,
             "away_pitcher_name": away_pitcher_name,
         }
+
+    @staticmethod
+    def _extract_f5_scores(linescore: dict[str, Any]) -> tuple[int, int]:
+        """Sum runs for the first 5 innings from linescore innings array."""
+        innings = linescore.get("innings", [])
+        home_f5 = 0
+        away_f5 = 0
+        for inning in innings[:5]:  # first 5 innings only
+            home_f5 += int(inning.get("home", {}).get("runs", 0) or 0)
+            away_f5 += int(inning.get("away", {}).get("runs", 0) or 0)
+        return home_f5, away_f5
 
     @staticmethod
     def _get_pitcher_stat(pitcher: dict[str, Any], stat_name: str) -> float:

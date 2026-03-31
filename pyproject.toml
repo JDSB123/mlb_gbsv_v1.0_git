@@ -4,22 +4,24 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mlbv1"
-version = "0.2.0"
+version = "1.0.0"
 description = "MLB spread prediction pipeline — robust ensemble with tracking, alerts & dashboard"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = { text = "MIT" }
 authors = [{ name = "JDSB" }]
 dependencies = [
   "numpy==1.26.4",
   "pandas==2.1.4",
   "scikit-learn==1.4.2",
+  "scipy>=1.11.0",
   "xgboost==2.0.3",
   "lightgbm==4.3.0",
   "joblib==1.4.2",
   "requests==2.31.0",
   "flask==3.0.3",
   "gunicorn==22.0.0",
+  "setuptools<82",
   "azure-identity==1.16.0",
   "azure-keyvault-secrets==4.8.0",
   "azure-storage-blob==12.20.0",
@@ -66,7 +68,7 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
@@ -76,7 +78,7 @@ ignore = ["E203", "E266", "E501"]
 known-first-party = ["mlbv1"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 warn_return_any = false
 warn_unused_configs = true
 strict = false

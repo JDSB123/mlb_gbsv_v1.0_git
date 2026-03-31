@@ -191,8 +191,15 @@ class TrackingDB:
         home_team: str,
         actual_home_score: int,
         actual_away_score: int,
+        *,
+        f5_home_score: int | None = None,
+        f5_away_score: int | None = None,
     ) -> int:
-        """Settle predictions for a specific game with actual scores."""
+        """Settle predictions for a specific game with actual scores.
+
+        If *f5_home_score* and *f5_away_score* are provided, F5 markets
+        will be settled as well.
+        """
         margin = actual_home_score - actual_away_score
         total_runs = actual_home_score + actual_away_score
         now = datetime.now(tz=UTC).isoformat()
@@ -206,18 +213,26 @@ class TrackingDB:
             count = 0
             for row in rows:
                 market = str(row["market"])
-                actual_result: int | None
-
-                if market in {"f5_spread", "f5_moneyline", "f5_total"}:
-                    # F5 settlement requires inning-level score feed.
-                    continue
+                actual_result: int | None = None
 
                 if market == "spread":
                     actual_result = 1 if (margin + float(row["spread"])) > 0 else 0
                 elif market == "moneyline":
                     actual_result = 1 if margin > 0 else 0
                 elif market == "total":
+                    # The spread column stores the total line for total-market predictions.
                     actual_result = 1 if total_runs > float(row["spread"]) else 0
+                elif market in {"f5_spread", "f5_moneyline", "f5_total"}:
+                    if f5_home_score is None or f5_away_score is None:
+                        continue  # Cannot settle F5 without inning-level scores
+                    f5_margin = f5_home_score - f5_away_score
+                    f5_total = f5_home_score + f5_away_score
+                    if market == "f5_spread":
+                        actual_result = 1 if (f5_margin + float(row["spread"])) > 0 else 0
+                    elif market == "f5_moneyline":
+                        actual_result = 1 if f5_margin > 0 else 0
+                    elif market == "f5_total":
+                        actual_result = 1 if f5_total > float(row["spread"]) else 0
                 else:
                     actual_result = 1 if (margin + float(row["spread"])) > 0 else 0
 

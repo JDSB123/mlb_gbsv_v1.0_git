@@ -48,7 +48,7 @@ def main() -> None:
         default="both",
         choices=[
             "random_forest",
-            "logistic_regression",
+            "ridge_regression",
             "xgboost",
             "lightgbm",
             "both",
@@ -300,9 +300,9 @@ def _walk_forward_backtest(
 
 def _resolve_model_types(model_arg: str) -> list[str]:
     if model_arg == "all":
-        return ["random_forest", "logistic_regression", "xgboost", "lightgbm"]
+        return ["random_forest", "ridge_regression", "xgboost", "lightgbm"]
     if model_arg == "both":
-        return ["random_forest", "logistic_regression"]
+        return ["random_forest", "ridge_regression"]
     return [model_arg]
 
 
@@ -320,8 +320,8 @@ def _train_model(
 
     if model_type == "random_forest":
         return trainer.train_random_forest(X, y, config.model.random_forest)
-    if model_type == "logistic_regression":
-        return trainer.train_logistic_regression(X, y, config.model.logistic_regression)
+    if model_type == "ridge_regression":
+        return trainer.train_ridge_regression(X, y, config.model.ridge_regression)
     if model_type == "xgboost":
         return trainer.train_xgboost(X, y, config.model.xgboost)
     if model_type == "lightgbm":
