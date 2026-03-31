@@ -309,6 +309,10 @@ class OddsAPILoader(BaseLoader):
                     "f5_total_runs": markets.get("f5_total_runs", 0.0),
                     "f5_over_odds": markets.get("f5_over_odds", -110),
                     "f5_under_odds": markets.get("f5_under_odds", -110),
+                    "home_spread_odds": markets.get("home_spread_odds", -110),
+                    "away_spread_odds": markets.get("away_spread_odds", -110),
+                    "f5_home_spread_odds": markets.get("f5_home_spread_odds", -110),
+                    "f5_away_spread_odds": markets.get("f5_away_spread_odds", -110),
                 }
             )
         df = pd.DataFrame.from_records(records)
@@ -830,12 +834,16 @@ def _extract_all_markets(item: dict[str, Any]) -> dict[str, float]:
     """Extract full game and F5 markets: ML, spread, totals."""
     res = {
         "spread": 0.0,
+        "home_spread_odds": -110.0,
+        "away_spread_odds": -110.0,
         "home_moneyline": -110.0,
         "away_moneyline": -110.0,
         "total_runs": 0.0,
         "over_odds": -110.0,
         "under_odds": -110.0,
         "f5_spread": 0.0,
+        "f5_home_spread_odds": -110.0,
+        "f5_away_spread_odds": -110.0,
         "f5_home_moneyline": -110.0,
         "f5_away_moneyline": -110.0,
         "f5_total_runs": 0.0,
@@ -854,6 +862,9 @@ def _extract_all_markets(item: dict[str, Any]) -> dict[str, float]:
                 for o in outcomes:
                     if o.get("name") == home:
                         res["spread"] = float(o.get("point", res["spread"]))
+                        res["home_spread_odds"] = float(o.get("price", -110))
+                    elif o.get("name") == away:
+                        res["away_spread_odds"] = float(o.get("price", -110))
             elif mkey == "h2h":
                 for o in outcomes:
                     price = float(o.get("price", -110))
@@ -874,6 +885,9 @@ def _extract_all_markets(item: dict[str, Any]) -> dict[str, float]:
                 for o in outcomes:
                     if o.get("name") == home:
                         res["f5_spread"] = float(o.get("point", res["f5_spread"]))
+                        res["f5_home_spread_odds"] = float(o.get("price", -110))
+                    elif o.get("name") == away:
+                        res["f5_away_spread_odds"] = float(o.get("price", -110))
             elif mkey in {"h2h_1st_half", "h2h_1st_5_innings"}:
                 for o in outcomes:
                     price = float(o.get("price", -110))

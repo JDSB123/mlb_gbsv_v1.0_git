@@ -114,6 +114,8 @@ def _build_pick_rows(
     games_df: pd.DataFrame,
     model_results: dict[str, PredictionResult],
     today: str,
+    *,
+    cold_start: bool = False,
 ) -> list[dict[str, Any]]:
     """Generate one row per (game × segment × market × side)."""
     rows: list[dict[str, Any]] = []
@@ -161,6 +163,8 @@ def _build_pick_rows(
 
         # ── FG Market Data ───────────────────────────────────────────
         fg_spread = float(game.get("spread", -1.5))
+        fg_home_spread_odds = float(game.get("home_spread_odds", -110))
+        fg_away_spread_odds = float(game.get("away_spread_odds", -110))
         fg_home_ml = float(game.get("home_moneyline", -110))
         fg_away_ml = float(game.get("away_moneyline", -110))
         fg_total = float(game.get("total_runs", 8.5))
@@ -169,6 +173,8 @@ def _build_pick_rows(
 
         # F5 Market Data
         f5_spread = float(game.get("f5_spread", 0.0))
+        f5_home_spread_odds = float(game.get("f5_home_spread_odds", -110))
+        f5_away_spread_odds = float(game.get("f5_away_spread_odds", -110))
         f5_home_ml = float(game.get("f5_home_moneyline", -110))
         f5_away_ml = float(game.get("f5_away_moneyline", -110))
         f5_total = float(game.get("f5_total_runs", 0.0))
@@ -191,9 +197,9 @@ def _build_pick_rows(
                 {
                     "market_type": "Spread",
                     "pick": f"{home} {fg_spread:+.1f}",
-                    "odds_current": fg_home_ml,  # spread odds typically -110, using ML as proxy
+                    "odds_current": fg_home_spread_odds,
                     "model_prob": avg.get("home_spread_cover_prob", 0.5),
-                    "counter_odds": fg_away_ml,
+                    "counter_odds": fg_away_spread_odds,
                     "line": fg_spread,
                 },
                 {
@@ -258,9 +264,9 @@ def _build_pick_rows(
                 {
                     "market_type": "Spread",
                     "pick": f"{home} {f5_spread_display:+.1f}",
-                    "odds_current": f5_home_ml,
+                    "odds_current": f5_home_spread_odds,
                     "model_prob": avg.get("f5_home_spread_cover_prob", 0.5),
-                    "counter_odds": f5_away_ml,
+                    "counter_odds": f5_away_spread_odds,
                     "line": f5_spread_display,
                 },
                 {
@@ -343,16 +349,25 @@ def _build_pick_rows(
                 #   live odds:  EV > 3% AND model_prob > 52%
                 #   model odds: EV > 5% AND model_prob > 55%
                 #   synthetic:  never recommend (no real line to bet against)
-                if quality == "live":
+                #   cold_start: never recommend (features are mostly defaults)
+                if cold_start:
+                    is_rec = False
+                elif quality == "live":
                     is_rec = ev > 0.03 and model_p > 0.52
                 elif quality == "model":
                     is_rec = ev > 0.05 and model_p > 0.55
                 else:  # synthetic
                     is_rec = False
 
+                # In cold start, discount confidence by 50%
+                if cold_start:
+                    confidence *= 0.5
+
                 # Build rationale for recommended picks
                 rationale = ""
-                if is_rec:
+                if cold_start:
+                    rationale = "COLD START — predictions clustered, low confidence"
+                elif is_rec:
                     bullets = []
                     bullets.append(f"Model: {model_p:.1%} vs implied {_implied_prob(odds_cur):.1%} ({n_models} models agree)")
                     bullets.append(f"EV: {ev:+.1%} | Kelly: {kelly:.2%}")
@@ -447,6 +462,23 @@ def main() -> None:
         long_window=config.features.rolling_window_long,
     )
 
+    # ── Cold-start detection ─────────────────────────────────────────
+    # Count how many features are constant (zero/default) across all games.
+    # When most features are constant, the model can only differentiate
+    # games by market odds → predictions cluster and are unreliable.
+    n_total = features.X.shape[1]
+    n_constant = sum(1 for c in features.X.columns if features.X[c].nunique() <= 1)
+    pct_constant = n_constant / n_total if n_total else 0
+    cold_start = pct_constant > 0.5
+
+    if cold_start:
+        logger.warning(
+            "COLD START: %d of %d features (%.0f%%) are constant — "
+            "predictions will cluster and are LOW CONFIDENCE. "
+            "This is expected early in the season.",
+            n_constant, n_total, pct_constant * 100,
+        )
+
     # ── 3. Load all models & predict ─────────────────────────────────
     model_dir = Path("artifacts/models")
     model_paths = sorted(model_dir.glob("*.pkl"))
@@ -470,7 +502,7 @@ def main() -> None:
         return
 
     # ── 4. Build pick rows ───────────────────────────────────────────
-    pick_rows = _build_pick_rows(model_input, model_results, today)
+    pick_rows = _build_pick_rows(model_input, model_results, today, cold_start=cold_start)
     logger.info("Generated %d pick rows across all games/segments/markets", len(pick_rows))
 
     # ── 5. Write CSV ─────────────────────────────────────────────────
@@ -497,10 +529,29 @@ def main() -> None:
     recs = [r for r in pick_rows if r["is_recommended"]]
     logger.info("")
     logger.info("═" * 100)
-    logger.info("  RECOMMENDED PICKS FOR %s  (%d of %d)", today, len(recs), len(pick_rows))
+    if cold_start:
+        logger.info("  COLD START — %d/%d features constant. No recommendations.", n_constant, n_total)
+        logger.info("  Showing top EV picks for reference only (NOT actionable).")
+    else:
+        logger.info("  RECOMMENDED PICKS FOR %s  (%d of %d)", today, len(recs), len(pick_rows))
     logger.info("═" * 100)
 
-    if not recs:
+    if cold_start:
+        # Show top 15 LIVE-odds picks by EV for reference
+        live_picks = [r for r in pick_rows if r["odds_quality"] == "live"]
+        top = sorted(live_picks, key=lambda x: -x["no_vig_ev"])[:15]
+        header = f"{'Game':<22} {'Seg':>3} {'Market':<12} {'Pick':<20} {'Odds':>6} {'Qual':<5} {'Model%':>7} {'Impl%':>7} {'EV':>7} {'Kelly':>7} {'Conf':>6}"
+        logger.info(header)
+        logger.info("-" * len(header))
+        for r in top:
+            logger.info(
+                f"{r['game']:<22} {r['segment']:>3} {r['market_type']:<12} "
+                f"{r['pick']:<20} {r['odds_current']:>+6d} "
+                f"{r['odds_quality']:<5} "
+                f"{r['model_prob']:>6.1%} {r['implied_prob']:>6.1%} "
+                f"{r['no_vig_ev']:>+6.1%} {r['kelly']:>6.2%} {r['confidence']:>5.2f}"
+            )
+    elif not recs:
         logger.info("  No picks met threshold (EV > 3%% AND model_prob > 52%%)")
         logger.info("  Review full sheet: %s", csv_path)
     else:

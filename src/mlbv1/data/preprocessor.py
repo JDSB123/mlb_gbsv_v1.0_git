@@ -19,10 +19,14 @@ REQUIRED_COLUMNS = [
 
 # Supported columns moving forward
 OPTIONAL_COLUMNS = [
+    "home_spread_odds",
+    "away_spread_odds",
     "total_runs",
     "over_odds",
     "under_odds",
     "f5_spread",
+    "f5_home_spread_odds",
+    "f5_away_spread_odds",
     "f5_home_moneyline",
     "f5_away_moneyline",
     "f5_total_runs",
@@ -68,10 +72,14 @@ def clean_data(df: pd.DataFrame) -> pd.DataFrame:
 
     # Optional odds/line columns (if present)
     optional_numeric = [
+        "home_spread_odds",
+        "away_spread_odds",
         "total_runs",
         "over_odds",
         "under_odds",
         "f5_spread",
+        "f5_home_spread_odds",
+        "f5_away_spread_odds",
         "f5_home_moneyline",
         "f5_away_moneyline",
         "f5_total_runs",
