@@ -170,6 +170,24 @@ class TestMLBStatsAPILoader:
             call_url = mock_get.call_args[0][0]
             assert "2024-06-01" in call_url
 
+    def test_parse_game_normalizes_mlb_abbreviations(self) -> None:
+        game = {
+            "status": {"abstractGameState": "Final"},
+            "gameDate": "2024-06-15T23:00:00Z",
+            "teams": {
+                "home": {"team": {"abbreviation": "CWS"}},
+                "away": {"team": {"abbreviation": "KC"}},
+            },
+            "linescore": {
+                "teams": {"home": {"runs": 5}, "away": {"runs": 3}},
+                "innings": [],
+            },
+        }
+        parsed = MLBStatsAPILoader._parse_game(game)
+        assert parsed is not None
+        assert parsed["home_team"] == "CHW"
+        assert parsed["away_team"] == "KCR"
+
 
 # ---------------------------------------------------------------------------
 # OddsAPI (mocked HTTP)

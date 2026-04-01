@@ -32,9 +32,10 @@ from scipy.stats import poisson, skellam
 # ── project imports ──────────────────────────────────────────────────────
 from mlbv1.config import AppConfig
 from mlbv1.data.loader import OddsAPILoader
+from mlbv1.data.loader import MLBStatsAPILoader
 from mlbv1.data.historical_enrichment import enrich_training_data_with_historical_sources
-from mlbv1.data.preprocessor import preprocess
-from mlbv1.features.engineer import engineer_features
+from mlbv1.data.preprocessor import ProcessedData, preprocess
+from mlbv1.features.engineer import FeatureSet, engineer_features
 from mlbv1.models.market_deriver import MarketDeriver
 from mlbv1.models.predictor import PredictionResult, load_model, predict
 from mlbv1.tracking.database import TrackingDB
@@ -733,6 +734,79 @@ def _write_audit_artifact(path: Path, audit: dict[str, Any]) -> None:
         json.dump(audit, handle, indent=2, sort_keys=True)
 
 
+def _prepare_live_features_with_history(
+    model_input: pd.DataFrame,
+    config: AppConfig,
+) -> tuple[ProcessedData, FeatureSet, int]:
+    """Build live inference features with recent historical context rows."""
+    history_days = int(os.getenv("LIVE_CONTEXT_DAYS", "120"))
+    live = model_input.copy().reset_index(drop=True)
+    live["_is_live"] = 1
+
+    hist = pd.DataFrame()
+    end = datetime.now(tz=UTC)
+    start = end - pd.Timedelta(days=history_days)
+    try:
+        hist_loader = MLBStatsAPILoader(
+            start_date=start.strftime("%Y-%m-%d"),
+            end_date=end.strftime("%Y-%m-%d"),
+        )
+        hist = hist_loader.load()
+    except Exception as exc:
+        logger.warning("Historical context load failed; using live-only features: %s", exc)
+
+    hist_rows = 0
+    if not hist.empty:
+        hist = hist.copy()
+        hist_rows = len(hist)
+        hist["_is_live"] = 0
+        for col in live.columns:
+            if col not in hist.columns:
+                hist[col] = pd.NA
+        for col in hist.columns:
+            if col not in live.columns:
+                live[col] = pd.NA
+        combined = pd.concat([hist, live], ignore_index=True, sort=False)
+    else:
+        combined = live
+
+    processed_all = preprocess(combined)
+    features_all = engineer_features(
+        processed_all.features,
+        short_window=config.features.rolling_window_short,
+        long_window=config.features.rolling_window_long,
+    )
+
+    live_mask = (
+        processed_all.features["_is_live"].fillna(0).astype(int) == 1
+        if "_is_live" in processed_all.features.columns
+        else pd.Series([True] * len(processed_all.features), index=processed_all.features.index)
+    )
+
+    live_features_df = (
+        processed_all.features.loc[live_mask]
+        .drop(columns=["_is_live"], errors="ignore")
+        .reset_index(drop=True)
+    )
+    live_target_df = processed_all.target.loc[live_mask].reset_index(drop=True)
+    live_metadata_df = processed_all.metadata.loc[live_mask].reset_index(drop=True)
+    live_targets_df = (
+        processed_all.targets.loc[live_mask].reset_index(drop=True)
+        if processed_all.targets is not None
+        else None
+    )
+    live_X = features_all.X.loc[live_mask].reset_index(drop=True)
+
+    processed_live = ProcessedData(
+        features=live_features_df,
+        target=live_target_df,
+        metadata=live_metadata_df,
+        targets=live_targets_df,
+    )
+    feature_live = FeatureSet(X=live_X, feature_names=list(live_X.columns))
+    return processed_live, feature_live, hist_rows
+
+
 # ═════════════════════════════════════════════════════════════════════════
 # Main
 # ═════════════════════════════════════════════════════════════════════════
@@ -776,11 +850,12 @@ def main() -> None:
         include_probable_pitchers=True, target_date=today,
     )
 
-    processed = preprocess(model_input)
-    features = engineer_features(
-        processed.features,
-        short_window=config.features.rolling_window_short,
-        long_window=config.features.rolling_window_long,
+    processed, features, hist_rows = _prepare_live_features_with_history(
+        model_input, config
+    )
+    logger.info(
+        "Engineered live features using %d contextual historical games",
+        hist_rows,
     )
 
     # ── Cold-start detection ─────────────────────────────────────────

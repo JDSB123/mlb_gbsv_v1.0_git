@@ -144,8 +144,9 @@ def main() -> None:
             include_probable_pitchers=True, target_date=today_str,
         )
 
-        today_processed = preprocess(today_df)
-        today_features = engineer_features(today_processed.features)
+        today_processed, today_features = _prepare_live_features_with_history(
+            today_df, config
+        )
 
         # Step 5: Generate predictions from all saved models
         logger.info("=== Step 5: Generating predictions ===")
@@ -511,6 +512,84 @@ def _build_loader_from_config(config: AppConfig):  # noqa: ANN201
     if loader_name == "mlb_stats":
         return MLBStatsAPILoader(days_back=90)
     raise ValueError(f"Unsupported loader in config: {loader_name}")
+
+
+def _prepare_live_features_with_history(
+    live_df: pd.DataFrame,
+    config: AppConfig,
+) -> tuple[ProcessedData, FeatureSet]:
+    """Build live prediction features using recent historical context.
+
+    This prevents early-season / slate-only cold starts where rolling features
+    collapse to zero when only today's games are present.
+    """
+    history_days = int(os.getenv("LIVE_CONTEXT_DAYS", "120"))
+    live = live_df.copy().reset_index(drop=True)
+    live["_is_live"] = 1
+
+    hist = pd.DataFrame()
+    end = datetime.now(tz=UTC)
+    start = end - timedelta(days=history_days)
+    try:
+        hist_loader = MLBStatsAPILoader(
+            start_date=start.strftime("%Y-%m-%d"),
+            end_date=end.strftime("%Y-%m-%d"),
+        )
+        hist = hist_loader.load()
+        logger.info("Loaded %d historical context games for live features", len(hist))
+    except Exception as exc:
+        logger.warning("Historical context load failed; using live-only features: %s", exc)
+
+    if not hist.empty:
+        hist = hist.copy()
+        hist["_is_live"] = 0
+
+        for col in live.columns:
+            if col not in hist.columns:
+                hist[col] = pd.NA
+        for col in hist.columns:
+            if col not in live.columns:
+                live[col] = pd.NA
+
+        combined = pd.concat([hist, live], ignore_index=True, sort=False)
+    else:
+        combined = live
+
+    processed_all = preprocess(combined)
+    features_all = engineer_features(
+        processed_all.features,
+        short_window=config.features.rolling_window_short,
+        long_window=config.features.rolling_window_long,
+    )
+
+    live_mask = (
+        processed_all.features["_is_live"].fillna(0).astype(int) == 1
+        if "_is_live" in processed_all.features.columns
+        else pd.Series([True] * len(processed_all.features), index=processed_all.features.index)
+    )
+
+    live_features_df = (
+        processed_all.features.loc[live_mask]
+        .drop(columns=["_is_live"], errors="ignore")
+        .reset_index(drop=True)
+    )
+    live_target_df = processed_all.target.loc[live_mask].reset_index(drop=True)
+    live_metadata_df = processed_all.metadata.loc[live_mask].reset_index(drop=True)
+    live_targets_df = (
+        processed_all.targets.loc[live_mask].reset_index(drop=True)
+        if processed_all.targets is not None
+        else None
+    )
+    live_X = features_all.X.loc[live_mask].reset_index(drop=True)
+
+    processed_live = ProcessedData(
+        features=live_features_df,
+        target=live_target_df,
+        metadata=live_metadata_df,
+        targets=live_targets_df,
+    )
+    feature_live = FeatureSet(X=live_X, feature_names=list(live_X.columns))
+    return processed_live, feature_live
 
 
 def _predict_with_all_models(

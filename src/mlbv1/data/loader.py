@@ -610,11 +610,15 @@ class MLBStatsAPILoader(BaseLoader):
 
         return {
             "game_date": game.get("gameDate", ""),
-            "home_team": home.get("team", {}).get(
-                "abbreviation", home.get("team", {}).get("name", "")
+            "home_team": normalize_team(
+                home.get("team", {}).get(
+                    "abbreviation", home.get("team", {}).get("name", "")
+                )
             ),
-            "away_team": away.get("team", {}).get(
-                "abbreviation", away.get("team", {}).get("name", "")
+            "away_team": normalize_team(
+                away.get("team", {}).get(
+                    "abbreviation", away.get("team", {}).get("name", "")
+                )
             ),
             "home_score": int(home_runs) if home_runs else 0,
             "away_score": int(away_runs) if away_runs else 0,
