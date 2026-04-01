@@ -86,12 +86,12 @@ def _no_vig_ev(model_prob: float, decimal_odds: float) -> float:
 
 
 def _kelly_fraction(model_prob: float, decimal_odds: float) -> float:
-    """Full Kelly criterion fraction (capped at 0)."""
+    """Quarter-Kelly criterion fraction (capped at 0)."""
     b = decimal_odds - 1.0
     if b <= 0:
         return 0.0
     f = (model_prob * b - (1 - model_prob)) / b
-    return max(0.0, f)
+    return max(0.0, f * 0.25)
 
 
 def _build_rationale(

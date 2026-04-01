@@ -106,17 +106,24 @@ class SyntheticHistoryGenerator:
         current_date = start_date
         game_count = 0
 
-        # Simple round-robin schedule
-        pairs_used = set()
-
+        # Generate realistic schedule: ~15 games per day across 180+ days
         while current_date <= end_date and game_count < 2430:
-            # Randomly select a matchup
-            home_team = random.choice(self.TEAMS)
-            away_team = random.choice([t for t in self.TEAMS if t != home_team])
-            pair_key = (home_team, away_team, current_date.date())
+            # Each day has ~15 games (30 teams / 2)
+            daily_games = random.randint(12, 16)
+            day_matchups = set()
 
-            if pair_key not in pairs_used:
-                pairs_used.add(pair_key)
+            for _ in range(daily_games):
+                if game_count >= 2430:
+                    break
+                # Pick teams not already playing today
+                available = [t for t in self.TEAMS if t not in day_matchups]
+                if len(available) < 2:
+                    break
+                home_team = random.choice(available)
+                day_matchups.add(home_team)
+                available.remove(home_team)
+                away_team = random.choice(available)
+                day_matchups.add(away_team)
 
                 # Generate game outcome
                 home_stats = team_stats[home_team]
@@ -148,9 +155,9 @@ class SyntheticHistoryGenerator:
                 else:
                     spread = round(random.uniform(0.5, 2.0), 1)
 
-                # Generate total line near actual total
-                total_runs = float(home_score + away_score)
-                total_line = round(total_runs + random.uniform(-2.0, 2.0), 1)
+                # Generate total line from team strengths (NOT actual score — avoids target leakage)
+                expected_total = home_stats["runs_per_game"] + away_stats["runs_per_game"]
+                total_line = round(expected_total + random.uniform(-1.0, 1.0), 1)
 
                 # Generate moneylines reflecting team strength
                 strength_diff = (home_stats["runs_per_game"] - away_stats["runs_per_game"])
@@ -178,10 +185,8 @@ class SyntheticHistoryGenerator:
                 )
                 game_count += 1
 
-            # Advance date (games every 1-2 days)
-            current_date += timedelta(
-                days=random.choice([1, 1, 1, 2])
-            )  # More games on some days
+            # Advance one day (games every day during season)
+            current_date += timedelta(days=1)
 
         return records
 

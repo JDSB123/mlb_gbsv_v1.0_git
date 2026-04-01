@@ -54,8 +54,9 @@ def predict(
         model.predict(features), index=X.index, columns=model.target_names
     )
 
-    # Ensure no negative runs predicted (ReLU)
-    preds = preds.clip(lower=0.01)
+    # Clamp predictions to realistic per-team MLB scoring range
+    # MLB teams average ~4.3 R/G; >8 per team is extremely rare
+    preds = preds.clip(lower=0.5, upper=8.0)
 
     f5_home = preds["f5_home_score"]
     f5_away = preds["f5_away_score"]
