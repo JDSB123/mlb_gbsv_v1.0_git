@@ -32,7 +32,7 @@ class TimeSeriesTuner:
         """Tune XGBoost parameters."""
         y_multi = self._prepare_targets(y)
         def objective(trial: optuna.Trial) -> float:
-            params = {
+            params: dict[str, Any] = {
                 "n_estimators": trial.suggest_int("n_estimators", 50, 400),
                 "max_depth": trial.suggest_int("max_depth", 2, 8),
                 "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.2, log=True),
@@ -53,7 +53,7 @@ class TimeSeriesTuner:
         """Tune LightGBM parameters."""
         y_multi = self._prepare_targets(y)
         def objective(trial: optuna.Trial) -> float:
-            params = {
+            params: dict[str, Any] = {
                 "n_estimators": trial.suggest_int("n_estimators", 50, 400),
                 "max_depth": trial.suggest_int("max_depth", 2, 8),
                 "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.2, log=True),
@@ -76,7 +76,7 @@ class TimeSeriesTuner:
         """Tune Random Forest parameters."""
         y_multi = self._prepare_targets(y)
         def objective(trial: optuna.Trial) -> float:
-            params = {
+            params: dict[str, Any] = {
                 "n_estimators": trial.suggest_int("n_estimators", 50, 400),
                 "max_depth": trial.suggest_int("max_depth", 2, 8),
                 "min_samples_split": trial.suggest_int("min_samples_split", 2, 10),

@@ -11,6 +11,7 @@ from typing import Any
 import pandas as pd
 
 from mlbv1.config import AppConfig
+from mlbv1.data.historical_enrichment import enrich_training_data_with_historical_sources
 from mlbv1.data.loader import (
     ActionNetworkLoader,
     BetsAPILoader,
@@ -20,7 +21,6 @@ from mlbv1.data.loader import (
     OddsAPILoader,
     SyntheticDataLoader,
 )
-from mlbv1.data.historical_enrichment import enrich_training_data_with_historical_sources
 from mlbv1.data.preprocessor import preprocess, train_test_split_time
 from mlbv1.features.engineer import engineer_features
 from mlbv1.metrics import evaluate

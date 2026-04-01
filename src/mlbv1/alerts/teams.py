@@ -17,6 +17,7 @@ import os
 import subprocess
 import sys
 import urllib.request
+from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Any
 
@@ -502,10 +503,8 @@ class TeamsAlert:
                 return False
         except urllib.error.HTTPError as exc:
             body = ""
-            try:
+            with suppress(Exception):
                 body = exc.read().decode("utf-8", errors="replace")[:500]
-            except Exception:
-                pass
             # Token expired — try refreshing once
             if exc.code == 401 and self._graph_token:
                 self._graph_token = _get_graph_token()

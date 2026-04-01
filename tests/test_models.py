@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import numpy as np
 from sklearn.base import BaseEstimator, RegressorMixin
 
-from mlbv1.config import LightGBMConfig, RidgeRegressionConfig, RandomForestConfig, XGBoostConfig
+from mlbv1.config import LightGBMConfig, RandomForestConfig, RidgeRegressionConfig, XGBoostConfig
 from mlbv1.data.loader import SyntheticDataLoader
 from mlbv1.data.preprocessor import preprocess
 from mlbv1.features.engineer import engineer_features

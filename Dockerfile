@@ -17,16 +17,17 @@ RUN useradd -m -u 1000 mlbuser && \
 # Copy dependency files
 COPY --chown=mlbuser:mlbuser pyproject.toml README.md alembic.ini /app/
 
+# Copy application code needed to build/install package
+COPY --chown=mlbuser:mlbuser src /app/src
+COPY --chown=mlbuser:mlbuser scripts /app/scripts
+
 # Install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip \
   && pip install --no-cache-dir .
 
-# Copy application code
-COPY --chown=mlbuser:mlbuser src /app/src
-COPY --chown=mlbuser:mlbuser scripts /app/scripts
-
-# Copy trained model artifacts
-COPY --chown=mlbuser:mlbuser artifacts/models/ /app/artifacts/models/
+# Ensure model artifacts exist in environments where artifacts/ is gitignored
+RUN mkdir -p /app/artifacts/models \
+  && python /app/scripts/bootstrap_models.py --if-missing
 
 # Set Python path
 ENV PYTHONPATH=/app/src

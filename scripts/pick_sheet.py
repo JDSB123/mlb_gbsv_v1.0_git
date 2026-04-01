@@ -18,25 +18,20 @@ import csv
 import json
 import logging
 import os
-import sys
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import joblib
 import numpy as np
 import pandas as pd
-from scipy.stats import poisson, skellam
 
 # ── project imports ──────────────────────────────────────────────────────
 from mlbv1.config import AppConfig
-from mlbv1.data.loader import OddsAPILoader
-from mlbv1.data.loader import MLBStatsAPILoader
 from mlbv1.data.historical_enrichment import enrich_training_data_with_historical_sources
+from mlbv1.data.loader import MLBStatsAPILoader, OddsAPILoader
 from mlbv1.data.preprocessor import ProcessedData, preprocess
 from mlbv1.features.engineer import FeatureSet, engineer_features
-from mlbv1.models.market_deriver import MarketDeriver
 from mlbv1.models.predictor import PredictionResult, load_model, predict
 from mlbv1.tracking.database import TrackingDB
 
@@ -238,7 +233,7 @@ def _build_pick_rows(
         n_models = len(model_results)
         prob_accum: dict[str, list[float]] = {}
 
-        for model_name, result in model_results.items():
+        for _model_name, result in model_results.items():
             # find matching index
             idx = None
             for i in range(len(result.market_probabilities)):
@@ -514,12 +509,9 @@ def _build_pick_rows(
         for seg in segments:
             for mkt in seg["markets"]:
                 odds_cur = mkt["odds_current"]
-                counter = mkt["counter_odds"]
                 dec_odds = _american_to_decimal(odds_cur)
                 model_p = mkt["model_prob"]
 
-                # No-vig probability: pass the picked side's odds first
-                nv_prob = _no_vig_prob(odds_cur, counter)
                 ev = _no_vig_ev(model_p, dec_odds)
                 kelly = _kelly_fraction(model_p, dec_odds)
                 confidence = min(1.0, kelly * 4)  # scale kelly to 0-1

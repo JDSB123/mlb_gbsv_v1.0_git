@@ -17,7 +17,7 @@ import sys
 import threading
 import time
 from contextlib import suppress
-from datetime import UTC, datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
