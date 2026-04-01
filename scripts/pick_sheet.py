@@ -22,6 +22,7 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -31,6 +32,10 @@ from mlbv1.config import AppConfig
 from mlbv1.data.historical_enrichment import enrich_training_data_with_historical_sources
 from mlbv1.data.loader import MLBStatsAPILoader, OddsAPILoader
 from mlbv1.data.preprocessor import ProcessedData, preprocess
+from mlbv1.data.slate_filter import (
+    DEFAULT_SLATE_TIMEZONE,
+    filter_pregame_games_for_date,
+)
 from mlbv1.features.engineer import FeatureSet, engineer_features
 from mlbv1.models.predictor import PredictionResult, load_model, predict
 from mlbv1.tracking.database import TrackingDB
@@ -808,7 +813,13 @@ def main() -> None:
     parser.add_argument("--date", type=str, default=None, help="Date (YYYY-MM-DD)")
     args = parser.parse_args()
 
-    today = args.date or datetime.now(tz=UTC).strftime("%Y-%m-%d")
+    slate_timezone = os.getenv("SLATE_TIMEZONE", DEFAULT_SLATE_TIMEZONE)
+    try:
+        now_local = datetime.now(tz=ZoneInfo(slate_timezone))
+    except Exception:
+        logger.warning("Invalid SLATE_TIMEZONE '%s'; defaulting to UTC", slate_timezone)
+        now_local = datetime.now(tz=UTC)
+    today = args.date or now_local.strftime("%Y-%m-%d")
     run_id = f"slate-{today}-{uuid.uuid4().hex[:8]}"
     generated_at_utc = datetime.now(tz=UTC).isoformat()
     logger.info("Generating MLB pick sheet for %s", today)
@@ -817,11 +828,27 @@ def main() -> None:
     config = AppConfig.load()
     config = config.override(data={"loader": "odds_api"})
     loader = OddsAPILoader(api_key=config.data.api_key, base_url=config.data.api_base_url)
-    games_df = loader.load()
-    logger.info("Loaded %d game/bookmaker rows", len(games_df))
+    raw_games_df = loader.load()
+    logger.info("Loaded %d raw game/bookmaker rows", len(raw_games_df))
+
+    games_df, filter_stats = filter_pregame_games_for_date(
+        raw_games_df,
+        target_date=today,
+        timezone_name=slate_timezone,
+    )
+    logger.info(
+        "Pregame filter (%s): kept %d/%d rows for %s (started=%d, off_date=%d, invalid_time=%d)",
+        filter_stats["timezone"],
+        filter_stats["kept_rows"],
+        filter_stats["input_rows"],
+        filter_stats["target_date"],
+        filter_stats["started_rows"],
+        filter_stats["off_date_rows"],
+        filter_stats["invalid_time_rows"],
+    )
 
     if games_df.empty:
-        logger.warning("No games found for %s", today)
+        logger.warning("No not-started games found for %s", today)
         return
 
     # TrackingDB (so alembic runs)
@@ -910,6 +937,8 @@ def main() -> None:
         "run_id": run_id,
         "generated_at_utc": generated_at_utc,
         "source_provider": "odds_api",
+        "slate_timezone": filter_stats.get("timezone"),
+        "pregame_filter": filter_stats,
         "quality_passed": quality_passed,
         "quality_metrics": quality_metrics,
         "quality_gates": gates,

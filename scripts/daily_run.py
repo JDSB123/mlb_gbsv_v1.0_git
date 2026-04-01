@@ -18,6 +18,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -35,6 +36,10 @@ from mlbv1.data.loader import (
     WeatherEnricher,
 )
 from mlbv1.data.preprocessor import ProcessedData, preprocess, train_test_split_time
+from mlbv1.data.slate_filter import (
+    DEFAULT_SLATE_TIMEZONE,
+    filter_pregame_games_for_date,
+)
 from mlbv1.features.engineer import FeatureSet, engineer_features
 from mlbv1.metrics import evaluate
 from mlbv1.models.predictor import load_model, predict
@@ -429,6 +434,31 @@ def _train_and_save(
 
 def _load_todays_games(config: AppConfig) -> pd.DataFrame:
     """Load today's games from odds APIs."""
+    slate_timezone = os.getenv("SLATE_TIMEZONE", DEFAULT_SLATE_TIMEZONE)
+    try:
+        target_date = datetime.now(tz=ZoneInfo(slate_timezone)).strftime("%Y-%m-%d")
+    except Exception:
+        logger.warning("Invalid SLATE_TIMEZONE '%s'; defaulting to UTC", slate_timezone)
+        target_date = datetime.now(tz=UTC).strftime("%Y-%m-%d")
+
+    def _filter_and_log(df: pd.DataFrame, source: str) -> pd.DataFrame:
+        filtered, stats = filter_pregame_games_for_date(
+            df,
+            target_date=target_date,
+            timezone_name=slate_timezone,
+        )
+        logger.info(
+            "Pregame filter for %s (%s): kept %d/%d rows for %s (started=%d, off_date=%d, invalid_time=%d)",
+            source,
+            stats["timezone"],
+            stats["kept_rows"],
+            stats["input_rows"],
+            stats["target_date"],
+            stats["started_rows"],
+            stats["off_date_rows"],
+            stats["invalid_time_rows"],
+        )
+        return filtered
 
     odds_key = os.getenv("ODDS_API_KEY", "")
     if odds_key:
@@ -437,7 +467,7 @@ def _load_todays_games(config: AppConfig) -> pd.DataFrame:
                 base_url="https://api.the-odds-api.com/v4",
                 api_key=odds_key,
             )
-            df = loader.load()
+            df = _filter_and_log(loader.load(), "odds_api")
             if not df.empty:
                 return df
         except Exception as exc:
@@ -450,7 +480,7 @@ def _load_todays_games(config: AppConfig) -> pd.DataFrame:
                 base_url="https://api.betsapi.com",
                 api_key=bets_key,
             )
-            df = loader_b.load()
+            df = _filter_and_log(loader_b.load(), "bets_api")
             if not df.empty:
                 return df
         except Exception as exc:
@@ -459,7 +489,7 @@ def _load_todays_games(config: AppConfig) -> pd.DataFrame:
     # Try configured loader as a final real-data source.
     try:
         configured_loader = _build_loader_from_config(config)
-        df = configured_loader.load()
+        df = _filter_and_log(configured_loader.load(), str(config.data.loader))
         if not df.empty:
             return df
     except Exception as exc:
