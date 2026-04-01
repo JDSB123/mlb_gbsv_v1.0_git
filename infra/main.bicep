@@ -13,6 +13,7 @@ param teamsGroupId string = ''
 param teamsChannelId string = ''
 @secure()
 param teamsWebhookUrl string = ''
+param dailyCronSchedule string = '0 15 * * *' // 15:00 UTC = 11:00 AM ET (before first pitch)
 
 var acrName = replace('${namePrefix}-acr', '-', '')
 var storageName = replace('${namePrefix}-sto', '-', '')
@@ -24,6 +25,7 @@ var appInsightsName = '${namePrefix}-ai'
 var sqlServerName = replace('${namePrefix}-sql', '-', '')
 var sqlDbName = 'mlb-tracking'
 var kvSecretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
+var acaJobName = '${namePrefix}-daily-trigger'
 var hasTriggerApiKey = !empty(triggerApiKey)
 var hasTeamsConfig = !empty(teamsGroupId) && !empty(teamsChannelId)
 var hasTeamsWebhook = !empty(teamsWebhookUrl)
@@ -304,6 +306,60 @@ resource acaApp 'Microsoft.App/containerApps@2023-05-01' = {
           }
         ]
       }
+    }
+  }
+}
+
+// Daily trigger job — hits /trigger on a CRON schedule
+resource dailyTriggerJob 'Microsoft.App/jobs@2023-05-01' = {
+  name: acaJobName
+  location: location
+  properties: {
+    environmentId: acaEnv.id
+    configuration: {
+      triggerType: 'Schedule'
+      scheduleTriggerConfig: {
+        cronExpression: dailyCronSchedule
+        parallelism: 1
+        replicaCompletionCount: 1
+      }
+      replicaTimeout: 600 // 10 min max
+      replicaRetryLimit: 1
+      secrets: hasTriggerApiKey
+        ? [
+            {
+              name: 'trigger-api-key'
+              value: triggerApiKey
+            }
+          ]
+        : []
+    }
+    template: {
+      containers: [
+        {
+          name: 'trigger'
+          image: 'curlimages/curl:latest'
+          resources: {
+            cpu: json('0.25')
+            memory: '0.5Gi'
+          }
+          command: [
+            'sh'
+            '-c'
+            hasTriggerApiKey
+              ? 'curl -sf -X POST -H "X-Trigger-Key: $TRIGGER_API_KEY" --max-time 300 https://${acaApp.properties.configuration.ingress.fqdn}/trigger'
+              : 'curl -sf -X POST --max-time 300 https://${acaApp.properties.configuration.ingress.fqdn}/trigger'
+          ]
+          env: hasTriggerApiKey
+            ? [
+                {
+                  name: 'TRIGGER_API_KEY'
+                  secretRef: 'trigger-api-key'
+                }
+              ]
+            : []
+        }
+      ]
     }
   }
 }
