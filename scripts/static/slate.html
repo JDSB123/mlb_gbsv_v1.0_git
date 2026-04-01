@@ -24,8 +24,10 @@ a{color:#2563eb;text-decoration:none}
 .spinner{display:inline-block;width:12px;height:12px;border:2px solid #ffffff40;border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;margin-right:4px}
 @keyframes spin{to{transform:rotate(360deg)}}
 /* Table */
+.slate-hidden{display:none}
 table#slate{width:100%;border-collapse:collapse;border:1px solid #dee2e6;margin:0 auto}
-#slate th{background:#1a2332;color:#d4af37;font-weight:600;font-size:11px;letter-spacing:1px;text-transform:uppercase;padding:8px 6px;text-align:left;white-space:nowrap;cursor:pointer;user-select:none}
+.th-center{text-align:center}
+#slate th{background:#1a2332;color:#d4af37;font-weight:600;font-size:11px;letter-spacing:1px;text-transform:uppercase;padding:8px 6px;text-align:left;white-space:nowrap;cursor:pointer;-webkit-user-select:none;user-select:none}
 #slate td{padding:6px;border-bottom:1px solid #e9ecef;font-size:13px;vertical-align:middle}
 #slate tbody tr:hover{background:#eef2ff!important}
 .sort-arrow{margin-left:4px;font-size:10px}
@@ -73,13 +75,13 @@ table#slate{width:100%;border-collapse:collapse;border:1px solid #dee2e6;margin:
 </div>
 
 <div id="filters">
-    <select id="fMatchup" onchange="applyFilters()"><option value="">All Matchups</option></select>
-    <select id="fSeg" onchange="applyFilters()">
+    <select id="fMatchup" title="Filter by matchup" onchange="applyFilters()"><option value="">All Matchups</option></select>
+    <select id="fSeg" title="Filter by segment" onchange="applyFilters()">
         <option value="">All Segments</option>
         <option value="FG">FG</option>
         <option value="F5">F5</option>
     </select>
-    <select id="fMkt" onchange="applyFilters()">
+    <select id="fMkt" title="Filter by market" onchange="applyFilters()">
         <option value="">All Markets</option>
         <option value="ML">ML</option>
         <option value="Spread">Spread</option>
@@ -87,7 +89,7 @@ table#slate{width:100%;border-collapse:collapse;border:1px solid #dee2e6;margin:
         <option value="Team Total">Team Total</option>
     </select>
     <input id="fEdge" type="number" step="0.5" min="0" placeholder="Min EV %" oninput="applyFilters()">
-    <select id="fRec" onchange="applyFilters()">
+    <select id="fRec" title="Filter by recommendation" onchange="applyFilters()">
         <option value="">All Picks</option>
         <option value="yes">Recommended Only</option>
     </select>
@@ -98,7 +100,7 @@ table#slate{width:100%;border-collapse:collapse;border:1px solid #dee2e6;margin:
 <div id="loading">Loading slate data...</div>
 <div id="error-msg"></div>
 
-<table id="slate" style="display:none">
+<table id="slate" class="slate-hidden">
 <thead>
 <tr>
     <th onclick="sortTable(0,'text')" data-col="0">Time CT<span class="sort-arrow">&#9650;&#9660;</span></th>
@@ -107,8 +109,8 @@ table#slate{width:100%;border-collapse:collapse;border:1px solid #dee2e6;margin:
     <th onclick="sortTable(3,'text')" data-col="3">Market<span class="sort-arrow">&#9650;&#9660;</span></th>
     <th onclick="sortTable(4,'text')" data-col="4">Pick<span class="sort-arrow">&#9650;&#9660;</span></th>
     <th onclick="sortTable(5,'text')" data-col="5">Model<span class="sort-arrow">&#9650;&#9660;</span></th>
-    <th onclick="sortTable(6,'num')" data-col="6" style="text-align:center">EV%<span class="sort-arrow">&#9650;&#9660;</span></th>
-    <th onclick="sortTable(7,'num')" data-col="7" style="text-align:center">Rating<span class="sort-arrow">&#9650;&#9660;</span></th>
+    <th onclick="sortTable(6,'num')" data-col="6" class="th-center">EV%<span class="sort-arrow">&#9650;&#9660;</span></th>
+    <th onclick="sortTable(7,'num')" data-col="7" class="th-center">Rating<span class="sort-arrow">&#9650;&#9660;</span></th>
 </tr>
 </thead>
 <tbody id="slateBody"></tbody>
@@ -374,7 +376,7 @@ function loadSlate(){
                 return;
             }
             _data=d.picks;
-            document.getElementById('slate').style.display='table';
+            document.getElementById('slate').classList.remove('slate-hidden');
             renderTable(_data);
             populateFilters(_data);
             updateHeader(d);

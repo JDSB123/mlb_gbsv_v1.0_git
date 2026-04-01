@@ -510,7 +510,7 @@ class ProbablePitcherEnricher:
                 return info[stat]
             # Try partial match (last name)
             last = pitcher_name.rsplit(" ", 1)[-1].lower()
-            for name, info in stats_lookup.items():
+            for name, _info in stats_lookup.items():
                 if name.rsplit(" ", 1)[-1].lower() == last:
                     # Ambiguous — skip
                     candidates = [
