@@ -15,7 +15,7 @@ Deploy MLB spread prediction model to Azure Container Apps with full observabili
 
 ### **ML Strategy**
 
-- **Ensemble Models**: Random Forest + Logistic Regression + XGBoost + LightGBM
+- **Ensemble Models**: Random Forest + Ridge Regression + XGBoost + LightGBM
 - **Features**: 30+ engineered features including:
   - Rolling team stats (5-game and 20-game windows)
   - Pitcher metrics (ERA, wins, differentials)

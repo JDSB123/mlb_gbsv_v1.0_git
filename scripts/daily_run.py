@@ -93,6 +93,8 @@ def main() -> None:
     run_id = f"daily-{datetime.now(tz=UTC).strftime('%Y%m%d')}-{uuid.uuid4().hex[:6]}"
     alerts = AlertManager() if not args.no_alerts else None
 
+    db.try_start_pipeline()
+
     try:
         # Step 1: Settle yesterday's predictions
         if args.settle:
@@ -218,10 +220,12 @@ def main() -> None:
         today_str = datetime.now(tz=UTC).strftime("%Y-%m-%d")
         _generate_and_post_slate(today_str)
 
+        db.finish_pipeline_run("success")
         logger.info("=== Daily pipeline complete: %s ===", run_id)
 
     except Exception as exc:
         logger.exception("Daily pipeline failed: %s", exc)
+        db.finish_pipeline_run("error")
         if alerts:
             alerts.send_alert(f"Daily pipeline FAILED: {exc}")
         raise
@@ -425,7 +429,7 @@ def _train_and_save(
                     accuracy=acc,
                     roi=metrics.roi,
                     sharpe=metrics.sharpe_ratio,
-                    config_json=json.dumps(config.to_dict()),
+                    config_json=json.dumps(config.to_safe_dict()),
                 )
             )
         except Exception as exc:

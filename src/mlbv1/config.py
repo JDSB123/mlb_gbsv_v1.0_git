@@ -85,7 +85,7 @@ class XGBoostConfig:
     reg_lambda: float = 1.0
     random_state: int = 42
     use_label_encoder: bool = False
-    eval_metric: str = "logloss"
+    eval_metric: str = "rmse"
 
 
 @dataclass(frozen=True)
@@ -247,6 +247,15 @@ class AppConfig:
                 "rolling_window_long": self.features.rolling_window_long,
             },
         }
+
+    def to_safe_dict(self) -> dict[str, Any]:
+        """Serialize config with secrets redacted for safe storage/logging."""
+        d = self.to_dict()
+        if d.get("data", {}).get("api_key"):
+            d["data"]["api_key"] = "***REDACTED***"
+        if d.get("data", {}).get("email"):
+            d["data"]["email"] = "***REDACTED***"
+        return d
 
     def override(
         self, data: dict[str, Any] | None = None, model: dict[str, Any] | None = None

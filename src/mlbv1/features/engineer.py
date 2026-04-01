@@ -118,17 +118,12 @@ def engineer_features(
     data["rest_days_home"] = _rest_days(data, "home_team")
     data["rest_days_away"] = _rest_days(data, "away_team")
 
-    # Weather normalization for indoor stadiums
-    # Default: 72F if home stadium is indoor
-    def _normalize_weather(row: pd.Series) -> pd.Series:
-        _, _, is_indoor = get_stadium_info(row["home_team"])
-        if is_indoor:
-            row["temperature_f"] = 72.0
-            row["wind_mph"] = 0.0
-            row["precipitation"] = 0.0
-        return row
-
-    data = data.apply(_normalize_weather, axis=1)
+    # Weather normalization for indoor stadiums (vectorized)
+    indoor_mask = data["home_team"].apply(lambda t: get_stadium_info(t)[2])
+    if indoor_mask.any():
+        data.loc[indoor_mask, "temperature_f"] = 72.0
+        data.loc[indoor_mask, "wind_mph"] = 0.0
+        data.loc[indoor_mask, "precipitation"] = 0.0
 
     data["temp_f"] = data.get(
         "temperature_f", pd.Series(70.0, index=data.index)
