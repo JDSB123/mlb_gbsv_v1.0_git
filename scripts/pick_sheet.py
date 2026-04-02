@@ -538,9 +538,8 @@ def _build_pick_rows(
         for seg in segments:
             for mkt in seg["markets"]:
                 # Skip extreme spread lines (alternate runlines, not standard ±1.5)
-                if mkt["market_type"] == "Spread" and mkt.get("line") is not None:
-                    if abs(mkt["line"]) > 3.5:
-                        continue
+                if mkt["market_type"] == "Spread" and mkt.get("line") is not None and abs(mkt["line"]) > 3.5:
+                    continue
 
                 odds_cur = mkt["odds_current"]
                 dec_odds = _american_to_decimal(odds_cur)
