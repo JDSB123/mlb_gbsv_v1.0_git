@@ -537,9 +537,18 @@ def _build_pick_rows(
         # ── Emit rows ───────────────────────────────────────────────
         for seg in segments:
             for mkt in seg["markets"]:
+                # Skip extreme spread lines (alternate runlines, not standard ±1.5)
+                if mkt["market_type"] == "Spread" and mkt.get("line") is not None:
+                    if abs(mkt["line"]) > 3.5:
+                        continue
+
                 odds_cur = mkt["odds_current"]
                 dec_odds = _american_to_decimal(odds_cur)
                 model_p = mkt["model_prob"]
+
+                # Cap model probability — no single outcome is >90% certain
+                # given model uncertainty (standard edge-capping practice)
+                model_p = min(model_p, 0.90)
 
                 ev = _no_vig_ev(model_p, dec_odds)
                 kelly = _kelly_fraction(model_p, dec_odds)
