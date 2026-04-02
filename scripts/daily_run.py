@@ -220,6 +220,10 @@ def main() -> None:
         today_str = datetime.now(tz=UTC).strftime("%Y-%m-%d")
         _generate_and_post_slate(today_str)
 
+        # Step 9: Model drift detection
+        logger.info("=== Step 9: Model drift detection ===")
+        _check_model_drift(consensus_picks, alerts)
+
         db.finish_pipeline_run("success")
         logger.info("=== Daily pipeline complete: %s ===", run_id)
 
@@ -229,6 +233,72 @@ def main() -> None:
         if alerts:
             alerts.send_alert(f"Daily pipeline FAILED: {exc}")
         raise
+
+
+def _check_model_drift(
+    picks: list[dict[str, Any]],
+    alerts: AlertManager | None,
+) -> None:
+    """Check model output metrics for drift and alert if thresholds breached."""
+    if not picks:
+        logger.info("No picks to check for drift")
+        return
+
+    drift_warnings: list[str] = []
+
+    # 1. Average predicted total (MLB avg ~8.6)
+    totals: list[float] = []
+    for p in picks:
+        h = float(p.get("exp_home_score", p.get("home_score", 0)))
+        a = float(p.get("exp_away_score", p.get("away_score", 0)))
+        if h > 0 and a > 0:
+            totals.append(h + a)
+    if totals:
+        avg_total = sum(totals) / len(totals)
+        if avg_total > 11.0:
+            drift_warnings.append(
+                f"Score inflation: avg predicted total {avg_total:.1f} (threshold: 11.0)"
+            )
+
+    # 2. Kelly sizing (quarter-Kelly max should be ~25%)
+    kellys = [float(p.get("kelly", p.get("edge", 0))) for p in picks if float(p.get("kelly", p.get("edge", 0))) > 0]
+    if kellys:
+        avg_kelly = sum(kellys) / len(kellys)
+        max_kelly = max(kellys)
+        if avg_kelly > 0.25:
+            drift_warnings.append(
+                f"Kelly inflation: avg {avg_kelly:.1%} (threshold: 25%)"
+            )
+        if max_kelly > 0.50:
+            drift_warnings.append(
+                f"Kelly spike: max {max_kelly:.1%} (threshold: 50%)"
+            )
+
+    # 3. Home bias (sides only)
+    side_picks = [p for p in picks if p.get("side") in ("home", "away")]
+    if len(side_picks) >= 4:
+        home_count = sum(1 for p in side_picks if p.get("side") == "home")
+        home_pct = home_count / len(side_picks) if side_picks else 0
+        if home_pct > 0.80:
+            drift_warnings.append(
+                f"Home bias: {home_pct:.0%} of side picks favor home ({home_count}/{len(side_picks)})"
+            )
+
+    # 4. Over/Under balance
+    over_picks = [p for p in picks if "over" in str(p.get("side", "")).lower()]
+    under_picks = [p for p in picks if "under" in str(p.get("side", "")).lower()]
+    if len(over_picks) + len(under_picks) >= 4 and len(under_picks) == 0:
+        drift_warnings.append(
+            f"Over bias: {len(over_picks)} overs, 0 unders"
+        )
+
+    if drift_warnings:
+        msg = "⚠ MODEL DRIFT DETECTED:\n" + "\n".join(f"  • {w}" for w in drift_warnings)
+        logger.warning(msg)
+        if alerts and alerts.has_channels:
+            alerts.send_alert(msg)
+    else:
+        logger.info("Model drift check passed — all metrics within thresholds")
 
 
 def _settle_yesterday(db: TrackingDB, config: AppConfig) -> None:

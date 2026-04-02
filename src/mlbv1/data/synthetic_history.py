@@ -78,10 +78,12 @@ class SyntheticHistoryGenerator:
         """Generate per-team statistics (win rate, ERA, average runs)."""
         stats = {}
         for team in self.TEAMS:
-            # Home teams typically have ~54% win rate, away teams ~46%
-            home_win_rate = random.uniform(0.420, 0.580)
-            away_win_rate = random.uniform(0.380, 0.540)
-            runs_per_game = random.uniform(3.5, 5.5)
+            # MLB home advantage is ~1.5pp (53.5% vs 46.5%)
+            base_win_rate = random.uniform(0.380, 0.580)
+            home_win_rate = min(0.600, base_win_rate + 0.015)
+            away_win_rate = max(0.350, base_win_rate - 0.015)
+            # MLB avg ~4.3 R/G per team (league total ~8.6)
+            runs_per_game = random.uniform(3.5, 5.0)
             pitcher_era = random.uniform(3.0, 4.5)
             pitcher_wins = random.randint(5, 18)
 
@@ -157,7 +159,7 @@ class SyntheticHistoryGenerator:
 
                 # Generate total line from team strengths (NOT actual score — avoids target leakage)
                 expected_total = home_stats["runs_per_game"] + away_stats["runs_per_game"]
-                total_line = round(expected_total + random.uniform(-1.0, 1.0), 1)
+                total_line = round(expected_total + random.uniform(-0.5, 0.5), 1)
 
                 # Generate moneylines reflecting team strength
                 strength_diff = (home_stats["runs_per_game"] - away_stats["runs_per_game"])

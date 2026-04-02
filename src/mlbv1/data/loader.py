@@ -801,8 +801,11 @@ class SyntheticDataLoader(BaseLoader):
         for _ in range(self.num_games):
             home = self._rng.choice(teams)
             away = self._rng.choice([t for t in teams if t != home])
-            home_score = self._rng.randint(0, 12)
-            away_score = self._rng.randint(0, 12)
+            # Poisson-distributed scores (MLB avg ~4.3 R/G per team)
+            home_score = min(15, int(self._rng.gauss(4.3, 2.2)))
+            away_score = min(15, int(self._rng.gauss(4.3, 2.2)))
+            home_score = max(0, home_score)
+            away_score = max(0, away_score)
             spread = round(self._rng.uniform(-2.5, 2.5), 1)
             home_ml = self._rng.choice([-140, -120, -110, 110, 130, 150])
             away_ml = -home_ml if home_ml < 0 else self._rng.choice([-150, -130, -110])

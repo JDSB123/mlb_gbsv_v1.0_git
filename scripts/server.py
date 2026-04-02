@@ -345,7 +345,10 @@ def trigger_pipeline() -> ResponseReturnValue:
         def _run():
             old_argv = sys.argv[:]
             try:
-                sys.argv = [str(PROJECT_ROOT / "scripts" / "daily_run.py")]
+                sys.argv = [
+                    str(PROJECT_ROOT / "scripts" / "daily_run.py"),
+                    "--settle",  # settle yesterday's predictions before generating new ones
+                ]
                 run_pipeline()
                 _tracking_db.finish_pipeline_run("success")
             except BaseException as exc:

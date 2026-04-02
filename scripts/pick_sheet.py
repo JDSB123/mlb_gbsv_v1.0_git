@@ -347,6 +347,18 @@ def _build_pick_rows(
                 "line_defaulted": fg_spread_defaulted,
                 "counter_defaulted": pd.isna(fg_away_spread_odds),
             })
+        if not pd.isna(fg_away_spread_odds):
+            away_spread = -fg_spread
+            fg_markets.append({
+                "market_type": "Spread",
+                "pick": f"{away} {away_spread:+.1f}",
+                "odds_current": fg_away_spread_odds,
+                "model_prob": 1.0 - avg.get("home_spread_cover_prob", 0.5),
+                "counter_odds": fg_home_spread_odds if not pd.isna(fg_home_spread_odds) else fg_away_spread_odds,
+                "line": away_spread,
+                "line_defaulted": fg_spread_defaulted,
+                "counter_defaulted": pd.isna(fg_home_spread_odds),
+            })
 
         if not pd.isna(fg_home_ml):
             fg_markets.append({
@@ -457,6 +469,18 @@ def _build_pick_rows(
                 "line": f5_spread_display,
                 "line_defaulted": f5_spread_defaulted or f5_spread == 0.0,
                 "counter_defaulted": pd.isna(f5_away_spread_odds),
+            })
+        if not pd.isna(f5_away_spread_odds):
+            f5_away_spread_display = -f5_spread_display
+            f5_markets.append({
+                "market_type": "Spread",
+                "pick": f"{away} {f5_away_spread_display:+.1f}",
+                "odds_current": f5_away_spread_odds,
+                "model_prob": 1.0 - avg.get("f5_home_spread_cover_prob", 0.5),
+                "counter_odds": f5_home_spread_odds if not pd.isna(f5_home_spread_odds) else f5_away_spread_odds,
+                "line": f5_away_spread_display,
+                "line_defaulted": f5_spread_defaulted or f5_spread == 0.0,
+                "counter_defaulted": pd.isna(f5_home_spread_odds),
             })
 
         if not pd.isna(f5_home_ml):
