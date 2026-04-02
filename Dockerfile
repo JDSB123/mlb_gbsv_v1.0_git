@@ -25,15 +25,18 @@ COPY --chown=mlbuser:mlbuser scripts /app/scripts
 RUN pip install --no-cache-dir --upgrade pip \
   && pip install --no-cache-dir .
 
-# Ensure model artifacts exist in environments where artifacts/ is gitignored
-RUN mkdir -p /app/artifacts/models \
-  && python /app/scripts/bootstrap_models.py --if-missing
-
 # Set Python path
 ENV PYTHONPATH=/app/src
 
-# Switch to non-root user
+# Switch to non-root user BEFORE bootstrapping models so files are owned by mlbuser
 USER mlbuser
+
+# Copy pre-trained model artifacts (overwrite bootstrap if they exist locally)
+COPY --chown=mlbuser:mlbuser artifacts/models/ /app/artifacts/models/
+
+# Ensure model artifacts exist and are writable by mlbuser
+RUN mkdir -p /app/artifacts/models \
+  && python /app/scripts/bootstrap_models.py --if-missing
 
 # Expose port for health checks
 EXPOSE 8000
