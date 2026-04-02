@@ -306,7 +306,7 @@ def _settle_yesterday(db: TrackingDB, config: AppConfig) -> None:
     logger.info("=== Step 1: Settling yesterday's predictions ===")
 
     try:
-        odds_key = os.getenv("ODDS_API_KEY", "")
+        odds_key = os.getenv("ODDS_API_KEY", "") or (config.data.api_key or "")
         if odds_key:
             from mlbv1.data.loader import OddsAPILoader
 
@@ -534,7 +534,7 @@ def _load_todays_games(config: AppConfig) -> pd.DataFrame:
         )
         return filtered
 
-    odds_key = os.getenv("ODDS_API_KEY", "")
+    odds_key = os.getenv("ODDS_API_KEY", "") or (config.data.api_key or "")
     if odds_key:
         try:
             loader = OddsAPILoader(
