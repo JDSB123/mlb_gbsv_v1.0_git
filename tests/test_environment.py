@@ -17,6 +17,8 @@ def test_bootstrap_skips_dotenv_in_test_context(
     monkeypatch.delenv("ODDS_API_KEY", raising=False)
     monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     monkeypatch.delenv("CI", raising=False)
+    monkeypatch.delenv("CONTAINER_APP_NAME", raising=False)
+    monkeypatch.delenv("CONTAINER_APP_REVISION_NAME", raising=False)
     monkeypatch.setenv("PYTEST_CURRENT_TEST", "tests/test_environment.py::test")
 
     state = bootstrap_environment(dotenv_path=dotenv_path)
