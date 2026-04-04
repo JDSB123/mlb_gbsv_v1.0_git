@@ -704,6 +704,39 @@ def _compute_quality_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "duplicate_rows": duplicate_rows,
         "missing_required_rows": missing_required_rows,
         "model_count": int(df["model_count"].max()),
+        **_compute_diversification_metrics(df),
+    }
+
+
+def _compute_diversification_metrics(df: pd.DataFrame) -> dict[str, Any]:
+    """Check if recommended picks are diversified across market directions."""
+    recs = df[df["is_recommended"] == True]  # noqa: E712
+    if recs.empty:
+        return {"diversification_warning": False, "rec_direction_breakdown": {}}
+    picks = recs["pick"].str.lower()
+    n_under = int(picks.str.contains("under").sum())
+    n_over = int(picks.str.contains("over").sum())
+    n_total_market = n_under + n_over
+    n_recs = len(recs)
+    # Flag when >75% of total/TT recommendations are on one side
+    one_sided = False
+    dominant_direction = None
+    if n_total_market >= 2:
+        if n_under / n_total_market > 0.75:
+            one_sided = True
+            dominant_direction = "under"
+        elif n_over / n_total_market > 0.75:
+            one_sided = True
+            dominant_direction = "over"
+    return {
+        "diversification_warning": one_sided,
+        "dominant_direction": dominant_direction,
+        "rec_direction_breakdown": {
+            "total_recs": n_recs,
+            "over_recs": n_over,
+            "under_recs": n_under,
+            "spread_ml_recs": n_recs - n_total_market,
+        },
     }
 
 
@@ -1051,6 +1084,19 @@ def main() -> None:
         logger.info("")
         for r in sorted(recs, key=lambda x: -x["no_vig_ev"])[:10]:
             logger.info("  ▸ %s — %s", r["pick"], r["rationale_bullets"])
+
+    # ── Diversification warning ──────────────────────────────────────
+    if quality_metrics.get("diversification_warning"):
+        direction = quality_metrics.get("dominant_direction", "unknown")
+        breakdown = quality_metrics.get("rec_direction_breakdown", {})
+        logger.warning("")
+        logger.warning(
+            "  ⚠ DIVERSIFICATION WARNING: %d of %d total/TT recs are %s-biased. "
+            "Check for systematic model bias.",
+            breakdown.get("under_recs", 0) if direction == "under" else breakdown.get("over_recs", 0),
+            breakdown.get("over_recs", 0) + breakdown.get("under_recs", 0),
+            direction,
+        )
 
     logger.info("")
     logger.info("Full sheet: %s", csv_path)
