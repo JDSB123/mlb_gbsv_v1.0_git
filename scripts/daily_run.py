@@ -26,14 +26,12 @@ from mlbv1.alerts.manager import AlertManager
 from mlbv1.config import AppConfig
 from mlbv1.data.historical_enrichment import enrich_training_data_with_historical_sources
 from mlbv1.data.loader import (
-    ActionNetworkLoader,
     BetsAPILoader,
-    CSVLoader,
-    JSONLoader,
     MLBStatsAPILoader,
     OddsAPILoader,
     SyntheticDataLoader,
     WeatherEnricher,
+    build_loader_from_config,
 )
 from mlbv1.data.preprocessor import ProcessedData, preprocess, train_test_split_time
 from mlbv1.data.slate_filter import (
@@ -44,7 +42,11 @@ from mlbv1.features.engineer import FeatureSet, engineer_features
 from mlbv1.metrics import evaluate
 from mlbv1.models.predictor import load_model, predict
 from mlbv1.models.trainer import ModelTrainer
+from mlbv1.models.training_helpers import get_training_jobs, train_model_safe
 from mlbv1.observability import configure_telemetry, track_accuracy, track_prediction
+from mlbv1.pipeline.consensus import build_consensus_picks, build_model_weights
+from mlbv1.pipeline.drift import check_model_drift
+from mlbv1.pipeline.feature_prep import prepare_live_features_with_history
 from mlbv1.tracking.database import PredictionRecord, RunRecord, TrackingDB
 from mlbv1.tracking.roi import BankrollConfig, BankrollManager
 
@@ -151,7 +153,7 @@ def main() -> None:
             include_probable_pitchers=True, target_date=today_str,
         )
 
-        today_processed, today_features = _prepare_live_features_with_history(
+        today_processed, today_features, _hist_count = prepare_live_features_with_history(
             today_df, config
         )
 
@@ -160,8 +162,8 @@ def main() -> None:
         all_picks = _predict_with_all_models(
             today_features, today_processed, db, run_id
         )
-        model_weights = _build_model_weights(db)
-        consensus_picks = _build_consensus_picks(all_picks, model_weights)
+        model_weights = build_model_weights(db)
+        consensus_picks = build_consensus_picks(all_picks, model_weights)
         logger.info(
             "Built %d weighted consensus picks from %d model picks",
             len(consensus_picks),
@@ -222,7 +224,7 @@ def main() -> None:
 
         # Step 9: Model drift detection
         logger.info("=== Step 9: Model drift detection ===")
-        _check_model_drift(consensus_picks, alerts)
+        check_model_drift(consensus_picks, alerts)
 
         db.finish_pipeline_run("success")
         logger.info("=== Daily pipeline complete: %s ===", run_id)
@@ -233,72 +235,6 @@ def main() -> None:
         if alerts:
             alerts.send_alert(f"Daily pipeline FAILED: {exc}")
         raise
-
-
-def _check_model_drift(
-    picks: list[dict[str, Any]],
-    alerts: AlertManager | None,
-) -> None:
-    """Check model output metrics for drift and alert if thresholds breached."""
-    if not picks:
-        logger.info("No picks to check for drift")
-        return
-
-    drift_warnings: list[str] = []
-
-    # 1. Average predicted total (MLB avg ~8.6)
-    totals: list[float] = []
-    for p in picks:
-        h = float(p.get("exp_home_score", p.get("home_score", 0)))
-        a = float(p.get("exp_away_score", p.get("away_score", 0)))
-        if h > 0 and a > 0:
-            totals.append(h + a)
-    if totals:
-        avg_total = sum(totals) / len(totals)
-        if avg_total > 11.0:
-            drift_warnings.append(
-                f"Score inflation: avg predicted total {avg_total:.1f} (threshold: 11.0)"
-            )
-
-    # 2. Kelly sizing (quarter-Kelly max should be ~25%)
-    kellys = [float(p.get("kelly", p.get("edge", 0))) for p in picks if float(p.get("kelly", p.get("edge", 0))) > 0]
-    if kellys:
-        avg_kelly = sum(kellys) / len(kellys)
-        max_kelly = max(kellys)
-        if avg_kelly > 0.25:
-            drift_warnings.append(
-                f"Kelly inflation: avg {avg_kelly:.1%} (threshold: 25%)"
-            )
-        if max_kelly > 0.50:
-            drift_warnings.append(
-                f"Kelly spike: max {max_kelly:.1%} (threshold: 50%)"
-            )
-
-    # 3. Home bias (sides only)
-    side_picks = [p for p in picks if p.get("side") in ("home", "away")]
-    if len(side_picks) >= 4:
-        home_count = sum(1 for p in side_picks if p.get("side") == "home")
-        home_pct = home_count / len(side_picks) if side_picks else 0
-        if home_pct > 0.80:
-            drift_warnings.append(
-                f"Home bias: {home_pct:.0%} of side picks favor home ({home_count}/{len(side_picks)})"
-            )
-
-    # 4. Over/Under balance
-    over_picks = [p for p in picks if "over" in str(p.get("side", "")).lower()]
-    under_picks = [p for p in picks if "under" in str(p.get("side", "")).lower()]
-    if len(over_picks) + len(under_picks) >= 4 and len(under_picks) == 0:
-        drift_warnings.append(
-            f"Over bias: {len(over_picks)} overs, 0 unders"
-        )
-
-    if drift_warnings:
-        msg = "⚠ MODEL DRIFT DETECTED:\n" + "\n".join(f"  • {w}" for w in drift_warnings)
-        logger.warning(msg)
-        if alerts and alerts.has_channels:
-            alerts.send_alert(msg)
-    else:
-        logger.info("Model drift check passed — all metrics within thresholds")
 
 
 def _settle_yesterday(db: TrackingDB, config: AppConfig) -> None:
@@ -409,7 +345,7 @@ def _load_training_data(config: AppConfig) -> pd.DataFrame:
     # Fallback to configured loader
     logger.info("Using fallback loader: %s", config.data.loader)
     try:
-        fallback_loader = _build_loader_from_config(config)
+        fallback_loader = build_loader_from_config(config)
         fallback_df = fallback_loader.load()
         if len(fallback_df) >= 50:
             return fallback_df
@@ -449,52 +385,27 @@ def _train_and_save(
     test_y = processed.target.loc[test_df.index]
 
     trainer = ModelTrainer(output_dir="artifacts/models")
-    model_types = ["random_forest", "ridge_regression", "xgboost", "lightgbm"]
+    jobs = get_training_jobs(trainer, config)
 
-    for model_type in model_types:
+    for job in jobs:
+        trained = train_model_safe(job, train_X, train_y)
+        if trained is None:
+            continue
         try:
-            if model_type == "random_forest":
-                trained = trainer.train_random_forest(
-                    train_X, train_y, config.model.random_forest
-                )
-            elif model_type == "ridge_regression":
-                trained = trainer.train_ridge_regression(
-                    train_X, train_y, config.model.ridge_regression
-                )
-            elif model_type == "xgboost":
-                trained = trainer.train_xgboost(train_X, train_y, config.model.xgboost)
-            elif model_type == "lightgbm":
-                trained = trainer.train_lightgbm(
-                    train_X, train_y, config.model.lightgbm
-                )
-            else:
-                continue
-
             acc = trainer.evaluate(trained, test_X, test_y)
-            if trained.scaler:
-                scaled_test = pd.DataFrame(
-                    trained.scaler.transform(test_X),
-                    columns=trained.feature_names,
-                    index=test_X.index,
-                )
-                preds = trained.model.predict(scaled_test)
-            else:
-                preds = trained.model.predict(test_X)
+            preds = trained.predict(test_X)
             metrics = evaluate(test_y, preds)
             trainer.save(trained)
 
             logger.info(
                 "%s: acc=%.3f roi=%.3f sharpe=%.3f",
-                model_type,
-                acc,
-                metrics.roi,
-                metrics.sharpe_ratio,
+                job.model_type, acc, metrics.roi, metrics.sharpe_ratio,
             )
-            track_accuracy(model_type, acc)
+            track_accuracy(job.model_type, acc)
             db.log_run(
                 RunRecord(
-                    run_id=f"{run_id}-{model_type}",
-                    model_name=model_type,
+                    run_id=f"{run_id}-{job.model_type}",
+                    model_name=job.model_type,
                     loader="daily",
                     accuracy=acc,
                     roi=metrics.roi,
@@ -503,7 +414,7 @@ def _train_and_save(
                 )
             )
         except Exception as exc:
-            logger.warning("Failed to train %s: %s", model_type, exc)
+            logger.warning("Failed to evaluate/save %s: %s", job.model_type, exc)
 
 
 def _load_todays_games(config: AppConfig) -> pd.DataFrame:
@@ -562,7 +473,7 @@ def _load_todays_games(config: AppConfig) -> pd.DataFrame:
 
     # Try configured loader as a final real-data source.
     try:
-        configured_loader = _build_loader_from_config(config)
+        configured_loader = build_loader_from_config(config)
         df = _filter_and_log(configured_loader.load(), str(config.data.loader))
         if not df.empty:
             return df
@@ -582,118 +493,6 @@ def _load_todays_games(config: AppConfig) -> pd.DataFrame:
         "No live odds available and synthetic fallback is disabled. Returning empty frame."
     )
     return pd.DataFrame()
-
-
-def _build_loader_from_config(config: AppConfig):  # noqa: ANN201
-    """Build a loader from AppConfig for explicit fallback use."""
-    loader_name = str(config.data.loader).strip()
-    if loader_name == "synthetic":
-        return SyntheticDataLoader(num_games=300)
-    if loader_name == "odds_api":
-        return OddsAPILoader(
-            config.data.api_base_url or "https://api.the-odds-api.com/v4",
-            config.data.api_key or os.getenv("ODDS_API_KEY", ""),
-        )
-    if loader_name == "bets_api":
-        return BetsAPILoader(
-            config.data.api_base_url or "https://api.betsapi.com",
-            config.data.api_key or os.getenv("BETS_API_KEY", ""),
-        )
-    if loader_name == "action_network":
-        return ActionNetworkLoader(
-            config.data.api_base_url or "https://api.actionnetwork.com",
-            config.data.api_key or os.getenv("ACTION_NETWORK_PASSWORD", ""),
-            config.data.email or os.getenv("ACTION_NETWORK_EMAIL", ""),
-        )
-    if loader_name == "csv":
-        if not config.data.input_path:
-            raise ValueError("CSV loader requires data.input_path")
-        return CSVLoader(config.data.input_path)
-    if loader_name == "json":
-        if not config.data.input_path:
-            raise ValueError("JSON loader requires data.input_path")
-        return JSONLoader(config.data.input_path)
-    if loader_name == "mlb_stats":
-        return MLBStatsAPILoader(days_back=90)
-    raise ValueError(f"Unsupported loader in config: {loader_name}")
-
-
-def _prepare_live_features_with_history(
-    live_df: pd.DataFrame,
-    config: AppConfig,
-) -> tuple[ProcessedData, FeatureSet]:
-    """Build live prediction features using recent historical context.
-
-    This prevents early-season / slate-only cold starts where rolling features
-    collapse to zero when only today's games are present.
-    """
-    history_days = int(os.getenv("LIVE_CONTEXT_DAYS", "120"))
-    live = live_df.copy().reset_index(drop=True)
-    live["_is_live"] = 1
-
-    hist = pd.DataFrame()
-    end = datetime.now(tz=UTC)
-    start = end - timedelta(days=history_days)
-    try:
-        hist_loader = MLBStatsAPILoader(
-            start_date=start.strftime("%Y-%m-%d"),
-            end_date=end.strftime("%Y-%m-%d"),
-        )
-        hist = hist_loader.load()
-        logger.info("Loaded %d historical context games for live features", len(hist))
-    except Exception as exc:
-        logger.warning("Historical context load failed; using live-only features: %s", exc)
-
-    if not hist.empty:
-        hist = hist.copy()
-        hist["_is_live"] = 0
-
-        for col in live.columns:
-            if col not in hist.columns:
-                hist[col] = pd.NA
-        for col in hist.columns:
-            if col not in live.columns:
-                live[col] = pd.NA
-
-        combined = pd.concat([hist, live], ignore_index=True, sort=False)
-    else:
-        combined = live
-
-    processed_all = preprocess(combined)
-    features_all = engineer_features(
-        processed_all.features,
-        short_window=config.features.rolling_window_short,
-        long_window=config.features.rolling_window_long,
-    )
-
-    live_mask = (
-        processed_all.features["_is_live"].fillna(0).astype(int) == 1
-        if "_is_live" in processed_all.features.columns
-        else pd.Series([True] * len(processed_all.features), index=processed_all.features.index)
-    )
-
-    live_features_df = (
-        processed_all.features.loc[live_mask]
-        .drop(columns=["_is_live"], errors="ignore")
-        .reset_index(drop=True)
-    )
-    live_target_df = processed_all.target.loc[live_mask].reset_index(drop=True)
-    live_metadata_df = processed_all.metadata.loc[live_mask].reset_index(drop=True)
-    live_targets_df = (
-        processed_all.targets.loc[live_mask].reset_index(drop=True)
-        if processed_all.targets is not None
-        else None
-    )
-    live_X = features_all.X.loc[live_mask].reset_index(drop=True)
-
-    processed_live = ProcessedData(
-        features=live_features_df,
-        target=live_target_df,
-        metadata=live_metadata_df,
-        targets=live_targets_df,
-    )
-    feature_live = FeatureSet(X=live_X, feature_names=list(live_X.columns))
-    return processed_live, feature_live
 
 
 def _predict_with_all_models(
@@ -778,116 +577,6 @@ def _predict_with_all_models(
             logger.warning("Model %s failed: %s", model_path.name, exc)
 
     return all_picks
-
-
-def _build_model_weights(
-    db: TrackingDB,
-    lookback_runs: int = 200,
-    decay: float = 0.97,
-) -> dict[str, float]:
-    """Build per-model weights from recent run accuracy history.
-
-    Uses exponential recency decay, where newer runs carry more weight.
-    """
-    runs = db.get_runs(limit=lookback_runs)
-    weighted_sums: dict[str, float] = {}
-    weight_totals: dict[str, float] = {}
-
-    for age, run in enumerate(runs):
-        model = str(run.get("model_name", "")).strip()
-        accuracy_raw = run.get("accuracy")
-        if not model or accuracy_raw is None:
-            continue
-        try:
-            accuracy = float(accuracy_raw)
-        except (TypeError, ValueError):
-            continue
-        if True:  # accuracy can be negative MSE now
-            recency_weight = decay**age
-            weighted_sums[model] = weighted_sums.get(model, 0.0) + (
-                accuracy * recency_weight
-            )
-            weight_totals[model] = weight_totals.get(model, 0.0) + recency_weight
-
-    weights: dict[str, float] = {}
-    for model_name, total in weighted_sums.items():
-        denom = weight_totals.get(model_name, 0.0)
-        if denom <= 0:
-            continue
-        # Keep a floor so weaker models still contribute a little.
-        weights[model_name] = max(0.05, float(total / denom))
-
-    if weights:
-        logger.info(
-            "Model weights from recent accuracy (decay=%.2f): %s",
-            decay,
-            ", ".join(f"{k}={v:.3f}" for k, v in sorted(weights.items())),
-        )
-    else:
-        logger.info("No historical model accuracy found; using equal weights")
-
-    return weights
-
-
-def _build_consensus_picks(
-    all_picks: list[dict[str, Any]],
-    model_weights: dict[str, float] | None = None,
-) -> list[dict[str, Any]]:
-    """Collapse per-model picks into one weighted consensus pick per game."""
-    if not all_picks:
-        return []
-
-    frame = pd.DataFrame(all_picks)
-    weights = model_weights or {}
-    frame["model_weight"] = frame["model_name"].map(weights).fillna(1.0).astype(float)
-    keys = [
-        "game_date",
-        "home_team",
-        "away_team",
-        "spread",
-        "home_moneyline",
-        "away_moneyline",
-    ]
-
-    consensus: list[dict[str, Any]] = []
-    grouped = frame.groupby(keys, dropna=False, sort=False)
-    for game_key, group in grouped:
-        total_weight = float(group["model_weight"].sum())
-        if total_weight <= 0:
-            total_weight = float(group.shape[0])
-            group = group.assign(model_weight=1.0)
-
-        weighted_home_prob = float(
-            (group["probability"] * group["model_weight"]).sum() / total_weight
-        )
-        weighted_home_pick = float(
-            (group["prediction"] * group["model_weight"]).sum() / total_weight
-        )
-        consensus_prediction = int(round(weighted_home_pick))
-        agreement = max(weighted_home_pick, 1.0 - weighted_home_pick)
-        model_names = sorted({str(name) for name in group["model_name"].tolist()})
-
-        game_date, home_team, away_team, spread, home_ml, away_ml = game_key
-        consensus.append(
-            {
-                "game_date": str(game_date),
-                "home_team": str(home_team),
-                "away_team": str(away_team),
-                "spread": float(str(spread)),
-                "prediction": consensus_prediction,
-                "probability": weighted_home_prob,
-                "home_moneyline": int(str(home_ml)),
-                "away_moneyline": int(str(away_ml)),
-                "model_name": "consensus",
-                "model_count": int(group.shape[0]),
-                "agreement": float(agreement),
-                "model_names": model_names,
-                "weight_sum": total_weight,
-            }
-        )
-
-    consensus.sort(key=lambda p: abs(float(p["probability"]) - 0.5), reverse=True)
-    return consensus
 
 
 if __name__ == "__main__":

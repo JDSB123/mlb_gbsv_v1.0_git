@@ -1019,3 +1019,45 @@ def _merge_odds_payloads(
                     base_bms[bm_key].setdefault("markets", []).append(market)
 
     return list(merged.values())
+
+
+# ---------------------------------------------------------------------------
+# Loader factory
+# ---------------------------------------------------------------------------
+
+
+def build_loader_from_config(config: Any) -> BaseLoader:  # noqa: ANN401
+    """Construct a loader instance from an AppConfig object.
+
+    Centralises the loader→class mapping so scripts don't duplicate it.
+    """
+    loader_name = str(config.data.loader).strip()
+    if loader_name == "synthetic":
+        return SyntheticDataLoader(num_games=300)
+    if loader_name == "odds_api":
+        return OddsAPILoader(
+            config.data.api_base_url or "https://api.the-odds-api.com/v4",
+            config.data.api_key or os.getenv("ODDS_API_KEY", ""),
+        )
+    if loader_name == "bets_api":
+        return BetsAPILoader(
+            config.data.api_base_url or "https://api.betsapi.com",
+            config.data.api_key or os.getenv("BETS_API_KEY", ""),
+        )
+    if loader_name == "action_network":
+        return ActionNetworkLoader(
+            config.data.api_base_url or "https://api.actionnetwork.com",
+            config.data.api_key or os.getenv("ACTION_NETWORK_PASSWORD", ""),
+            config.data.email or os.getenv("ACTION_NETWORK_EMAIL", ""),
+        )
+    if loader_name == "csv":
+        if not config.data.input_path:
+            raise ValueError("CSV loader requires data.input_path")
+        return CSVLoader(config.data.input_path)
+    if loader_name == "json":
+        if not config.data.input_path:
+            raise ValueError("JSON loader requires data.input_path")
+        return JSONLoader(config.data.input_path)
+    if loader_name == "mlb_stats":
+        return MLBStatsAPILoader()
+    raise ValueError(f"Unsupported loader: {loader_name}")
