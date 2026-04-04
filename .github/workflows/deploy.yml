@@ -79,6 +79,7 @@ jobs:
 
       - name: Build & Push Docker image
         run: |
+          mkdir -p artifacts/models
           TAG=${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
           LATEST=${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
           docker build -t $TAG -t $LATEST .
