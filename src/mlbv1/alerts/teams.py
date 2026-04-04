@@ -15,7 +15,6 @@ import json
 import logging
 import os
 import subprocess
-import sys
 import urllib.request
 from contextlib import suppress
 from datetime import UTC, datetime
@@ -23,7 +22,6 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_IS_WINDOWS = sys.platform == "win32"
 _GRAPH_SCOPE = "https://graph.microsoft.com/.default"
 
 
@@ -47,11 +45,15 @@ def _get_graph_token() -> str | None:
 
     # Fallback: az CLI subprocess (local dev)
     try:
+        # On Windows, locate az.cmd via shutil.which so we can avoid shell=True
+        # (shell=True is a command-injection vector).
+        import shutil
+
+        az_cmd = shutil.which("az") or "az"
         result = subprocess.run(
-            ["az", "account", "get-access-token", "--resource",
+            [az_cmd, "account", "get-access-token", "--resource",
              "https://graph.microsoft.com", "--query", "accessToken", "-o", "tsv"],
             capture_output=True, text=True, timeout=15,
-            shell=_IS_WINDOWS,
         )
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip()

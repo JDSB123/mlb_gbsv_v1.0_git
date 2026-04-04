@@ -17,9 +17,10 @@ import sys
 import threading
 import time
 from contextlib import suppress
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from flask import Flask, jsonify, request, send_from_directory
 from flask.typing import ResponseReturnValue
@@ -218,7 +219,7 @@ def api_slate() -> ResponseReturnValue:
     last_refreshed = None
     manifest = _tracking_db.get_slate_manifest(target_date)
     if manifest and manifest.get("created_at"):
-        ct = timezone(timedelta(hours=-6))
+        ct = ZoneInfo("America/Chicago")
         manifest_dt = datetime.fromisoformat(str(manifest["created_at"]))
         if manifest_dt.tzinfo is None:
             manifest_dt = manifest_dt.replace(tzinfo=UTC)

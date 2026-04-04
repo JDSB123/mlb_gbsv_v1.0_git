@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 from contextlib import contextmanager
@@ -38,6 +39,17 @@ class ModelVersion:
     accuracy: float
     created_at: str
     is_active: bool
+
+
+def _parse_feature_names(raw: str) -> list[str]:
+    """Deserialize feature names stored as JSON array or legacy comma-separated."""
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            return parsed
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return raw.split(",")
 
 
 class ModelRegistry:
@@ -78,7 +90,7 @@ class ModelRegistry:
             cur = conn.execute(
                 """INSERT INTO model_registry (model_name, model_type, file_path, feature_names, accuracy)
                    VALUES (?, ?, ?, ?, ?)""",
-                (model_name, model_type, file_path, ",".join(feature_names), accuracy),
+                (model_name, model_type, file_path, json.dumps(feature_names), accuracy),
             )
             return cur.lastrowid  # type: ignore
 
@@ -118,7 +130,7 @@ class ModelRegistry:
                 model_name=row["model_name"],
                 model_type=row["model_type"],
                 file_path=row["file_path"],
-                feature_names=row["feature_names"].split(","),
+                feature_names=_parse_feature_names(row["feature_names"]),
                 accuracy=row["accuracy"],
                 created_at=row["created_at"],
                 is_active=bool(row["is_active"]),
@@ -135,7 +147,7 @@ class ModelRegistry:
                     model_name=row["model_name"],
                     model_type=row["model_type"],
                     file_path=row["file_path"],
-                    feature_names=row["feature_names"].split(","),
+                    feature_names=_parse_feature_names(row["feature_names"]),
                     accuracy=row["accuracy"],
                     created_at=row["created_at"],
                     is_active=bool(row["is_active"]),

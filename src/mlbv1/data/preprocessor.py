@@ -44,6 +44,10 @@ OPTIONAL_COLUMNS = [
 ]
 
 
+# MLB historical average: ~58% of total runs score in innings 1-5.
+F5_RUN_FRACTION = 0.58
+
+
 class PreprocessingError(ValueError):
     """Raised when preprocessing fails."""
 
@@ -157,10 +161,9 @@ def build_targets(df: pd.DataFrame) -> pd.DataFrame:
                 f5_total > pd.to_numeric(df["f5_total_runs"], errors="coerce").fillna(0)
             ).astype(int)
     else:
-        # Fallback if F5 data is missing: ~58% of runs score in innings 1-5
-        # (MLB historical average), not a flat 50%.
-        targets["f5_home_score"] = (targets["home_score"] * 0.58).round()
-        targets["f5_away_score"] = (targets["away_score"] * 0.58).round()
+        # Fallback if F5 data is missing — use MLB historical average fraction.
+        targets["f5_home_score"] = (targets["home_score"] * F5_RUN_FRACTION).round()
+        targets["f5_away_score"] = (targets["away_score"] * F5_RUN_FRACTION).round()
 
     return targets
 

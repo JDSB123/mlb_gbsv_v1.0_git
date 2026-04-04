@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -14,12 +14,9 @@ from sklearn.model_selection import TimeSeriesSplit
 from sklearn.multioutput import MultiOutputRegressor
 from sklearn.preprocessing import StandardScaler
 
-logger = logging.getLogger(__name__)
+from mlbv1.models.trainer import RegressorLike
 
-class RegressorLike(Protocol):
-    """Protocol for regressors."""
-    def predict(self, X: Any) -> Any: ...
-    def fit(self, X: Any, y: Any) -> Any: ...
+logger = logging.getLogger(__name__)
 
 
 def _coerce_predictions(predictions: Any) -> np.ndarray:

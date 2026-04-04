@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 import pandas as pd
 from sklearn.metrics import mean_squared_error
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -29,15 +32,19 @@ def sharpe_ratio(returns: np.ndarray) -> float:
 
 
 def evaluate(y_true: pd.DataFrame, y_pred: Any) -> MetricsReport:
+    """Evaluate model predictions against actuals.
+
+    *accuracy* is reported as negative MSE (higher = better, 0.0 = perfect).
+    *roi* and *sharpe_ratio* require bet-level P&L data which is not available
+    at model-evaluation time; they are placeholders filled by the tracking layer.
+    """
+    score_cols = ["f5_home_score", "f5_away_score", "home_score", "away_score"]
     try:
-        y_true_clean = y_true[
-            ["f5_home_score", "f5_away_score", "home_score", "away_score"]
-        ].fillna(0)
+        y_true_clean = y_true[score_cols].fillna(0)
         mse = mean_squared_error(y_true_clean, y_pred)
         acc = -mse
-    except Exception:
+    except (KeyError, ValueError) as exc:
+        logger.warning("Metrics evaluation failed: %s", exc)
         acc = -999.0
 
-    roi = 0.00
-    sharpe = 0.00
-    return MetricsReport(accuracy=acc, roi=roi, sharpe_ratio=sharpe)
+    return MetricsReport(accuracy=acc, roi=0.0, sharpe_ratio=0.0)

@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 from urllib.error import URLError
@@ -31,8 +30,10 @@ class LahmanDataEnricher:
                 # Get last 5 years
                 dfs = []
                 for y in range(2021, 2026):
-                    with contextlib.suppress(Exception):
+                    try:
                         dfs.append(pitching_stats(y, qual=0))
+                    except (ValueError, KeyError, OSError) as exc:
+                        logger.debug("Skipping Lahman pitcher stats for %d: %s", y, exc)
                 if not dfs:
                     return pd.DataFrame()
                 df = pd.concat(dfs, ignore_index=True)
@@ -59,8 +60,10 @@ class LahmanDataEnricher:
             else:
                 dfs = []
                 for y in range(2023, 2026):
-                    with contextlib.suppress(Exception):
+                    try:
                         dfs.append(team_pitching(y))
+                    except (ValueError, KeyError, OSError) as exc:
+                        logger.debug("Skipping Lahman team stats for %d: %s", y, exc)
                 df = pd.concat(dfs, ignore_index=True)
 
             # Extract team ERA, team runs, team wins
@@ -162,8 +165,8 @@ class LahmanDataEnricher:
                         inplace=True,
                     )
 
-        except Exception as e:
-            logger.warning(f"Chadwick crosswalk mapping failed: {e}")
+        except (ImportError, KeyError, ValueError, TypeError) as e:
+            logger.warning("Chadwick crosswalk mapping failed: %s", e)
 
         # Fallback name-based merge if IDs were not available.
         if "Name" in stats.columns and "ERA" in stats.columns and "W" in stats.columns:
@@ -220,7 +223,7 @@ class LahmanDataEnricher:
         if "away_pitcher_era" not in df.columns:
             df["away_pitcher_era"] = 3.5
 
-        logger.info(f"Enriched {len(df)} games with pitcher stats from Lahman")
+        logger.info("Enriched %d games with pitcher stats from Lahman", len(df))
         return df
 
 
@@ -236,13 +239,13 @@ class StatcastEnricher:
         try:
             from pybaseball import statcast
 
-            logger.info(f"Fetching Statcast data from {start_date} to {end_date}...")
+            logger.info("Fetching Statcast data from %s to %s...", start_date, end_date)
             df = statcast(start_dt=start_date, end_dt=end_date)
             if df is not None and not df.empty:
-                logger.info(f"Loaded {len(df)} Statcast records")
+                logger.info("Loaded %d Statcast records", len(df))
                 return pd.DataFrame(df)
-        except Exception as e:
-            logger.warning(f"Could not fetch Statcast data: {e}")
+        except (ImportError, ValueError, OSError) as e:
+            logger.warning("Could not fetch Statcast data: %s", e)
 
         return pd.DataFrame()
 
@@ -304,11 +307,11 @@ class StatcastEnricher:
             ]
 
             logger.info(
-                f"Aggregated {len(agg_data)} game-days with {len(batted)} batted balls"
+                "Aggregated %d game-days with %d batted balls", len(agg_data), len(batted)
             )
             return agg_data
-        except Exception as e:
-            logger.warning(f"Statcast aggregation failed: {e}")
+        except (KeyError, ValueError, TypeError) as e:
+            logger.warning("Statcast aggregation failed: %s", e)
             return pd.DataFrame()
 
     @staticmethod
@@ -368,10 +371,10 @@ class StatcastEnricher:
                     "estimated_woba_using_speedangle_mean"
                 ].fillna(league_avg_xwoba)
 
-            logger.info(f"Merged Statcast metrics into {len(merged)} games")
+            logger.info("Merged Statcast metrics into %d games", len(merged))
             return merged
-        except Exception as e:
-            logger.warning(f"Statcast merge failed: {e}")
+        except (KeyError, ValueError, TypeError) as e:
+            logger.warning("Statcast merge failed: %s", e)
             return games_df
 
 
@@ -382,10 +385,10 @@ class RetroSheetEnricher:
     def download_retrosheet(year: int) -> pd.DataFrame:
         """Download and parse Retrosheet event files."""
         try:
-            logger.info(f"Retrosheet parsing not yet implemented for {year}")
+            logger.info("Retrosheet parsing not yet implemented for %d", year)
             return pd.DataFrame()
-        except Exception as e:
-            logger.warning(f"Retrosheet enrichment failed: {e}")
+        except (ImportError, OSError) as e:
+            logger.warning("Retrosheet enrichment failed: %s", e)
             return pd.DataFrame()
 
 
@@ -615,8 +618,8 @@ def enrich_training_data_with_historical_sources(
                 df, target_date
             )
             logger.info("✓ Probable pitcher enrichment complete")
-        except Exception as e:
-            logger.warning(f"Probable pitcher enrichment failed: {e}")
+        except (URLError, OSError, KeyError, ValueError) as e:
+            logger.warning("Probable pitcher enrichment failed: %s", e)
 
     if include_lahman:
         try:
@@ -627,10 +630,10 @@ def enrich_training_data_with_historical_sources(
                     df, pitcher_stats
                 )
                 logger.info(
-                    f"✓ Lahman enrichment complete: {len(pitcher_stats)} pitcher records"
+                    "Lahman enrichment complete: %d pitcher records", len(pitcher_stats)
                 )
-        except Exception as e:
-            logger.warning(f"Lahman enrichment failed: {e}")
+        except (ImportError, KeyError, ValueError, OSError) as e:
+            logger.warning("Lahman enrichment failed: %s", e)
 
     if include_statcast:
         try:
@@ -646,17 +649,18 @@ def enrich_training_data_with_historical_sources(
                 if not statcast_agg.empty:
                     df = StatcastEnricher.merge_statcast_into_games(df, statcast_agg)
                     logger.info(
-                        f"✓ Statcast enrichment complete: {len(statcast_agg)} game aggregations"
+                        "Statcast enrichment complete: %d game aggregations",
+                        len(statcast_agg),
                     )
-        except Exception as e:
-            logger.warning(f"Statcast enrichment failed: {e}")
+        except (ImportError, KeyError, ValueError, OSError) as e:
+            logger.warning("Statcast enrichment failed: %s", e)
 
     if include_retrosheet:
         try:
             logger.info("Enriching with Retrosheet play-by-play...")
             logger.info("Retrosheet integration requires manual setup")
-        except Exception as e:
-            logger.warning(f"Retrosheet enrichment failed: {e}")
+        except (ImportError, OSError) as e:
+            logger.warning("Retrosheet enrichment failed: %s", e)
 
-    logger.info(f"✓ Total enriched dataset: {len(df)} games")
+    logger.info("Total enriched dataset: %d games", len(df))
     return df

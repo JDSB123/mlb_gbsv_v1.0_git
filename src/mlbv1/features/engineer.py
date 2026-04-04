@@ -12,6 +12,21 @@ from mlbv1.data.mapping import get_stadium_info
 
 logger = logging.getLogger(__name__)
 
+# ── League-average defaults (source: 2024 Baseball Reference) ──────────
+MLB_AVG_WIN_RATE = 0.500          # 50% by definition
+MLB_AVG_RUNS_PER_GAME = 4.35     # runs per team per game
+DEFAULT_LAUNCH_SPEED = 88.8      # mph, league avg exit velocity
+DEFAULT_LAUNCH_SPEED_MAX = 95.0  # mph
+DEFAULT_LAUNCH_ANGLE = 12.5      # degrees
+DEFAULT_EST_BA = 0.265           # estimated batting avg (Statcast xBA)
+DEFAULT_EST_WOBA = 0.330         # estimated wOBA (Statcast xwOBA)
+DEFAULT_BARRELS = 25             # barrels per game-day aggregate
+DEFAULT_TEMP_F = 70.0            # fallback temperature
+DEFAULT_WIND_MPH = 5.0           # fallback wind speed
+INDOOR_TEMP_F = 72.0             # indoor/retractable roof temperature
+DEFAULT_REST_DAYS = 3.0          # assumed rest when no prior game exists
+DEFAULT_ODDS = -110.0            # standard vig juice line
+
 
 @dataclass(frozen=True)
 class FeatureSet:
@@ -33,69 +48,44 @@ def engineer_features(
 
     # Pitcher-level features (ERA, wins)
     _defaults_used: list[str] = []
-
-    if "home_pitcher_era" in data.columns:
-        data["home_pitcher_era"] = pd.to_numeric(
-            data["home_pitcher_era"], errors="coerce"
-        ).fillna(0.0)
-    else:
-        data["home_pitcher_era"] = 0.0
-        _defaults_used.append("home_pitcher_era")
-
-    if "away_pitcher_era" in data.columns:
-        data["away_pitcher_era"] = pd.to_numeric(
-            data["away_pitcher_era"], errors="coerce"
-        ).fillna(0.0)
-    else:
-        data["away_pitcher_era"] = 0.0
-        _defaults_used.append("away_pitcher_era")
-
-    if "home_pitcher_wins" in data.columns:
-        data["home_pitcher_wins"] = pd.to_numeric(
-            data["home_pitcher_wins"], errors="coerce"
-        ).fillna(0.0)
-    else:
-        data["home_pitcher_wins"] = 0.0
-        _defaults_used.append("home_pitcher_wins")
-
-    if "away_pitcher_wins" in data.columns:
-        data["away_pitcher_wins"] = pd.to_numeric(
-            data["away_pitcher_wins"], errors="coerce"
-        ).fillna(0.0)
-    else:
-        data["away_pitcher_wins"] = 0.0
-        _defaults_used.append("away_pitcher_wins")
+    _pitcher_cols = {
+        "home_pitcher_era": 0.0,
+        "away_pitcher_era": 0.0,
+        "home_pitcher_wins": 0.0,
+        "away_pitcher_wins": 0.0,
+    }
+    data, _defaults_used = _ensure_numeric_cols(data, _pitcher_cols, _defaults_used)
 
     data["pitcher_era_diff"] = data["home_pitcher_era"] - data["away_pitcher_era"]
     data["pitcher_wins_diff"] = data["home_pitcher_wins"] - data["away_pitcher_wins"]
 
     # Vectorised rolling stats via groupby().transform() — O(n) per group
     data["home_win_rate_short"] = _rolling_team_stat(
-        data, "home_team", "home_win", window=short_window
+        data, "home_team", "home_win", window=short_window, default=MLB_AVG_WIN_RATE
     )
     data["away_win_rate_short"] = _rolling_team_stat(
-        data, "away_team", "away_win", window=short_window
+        data, "away_team", "away_win", window=short_window, default=MLB_AVG_WIN_RATE
     )
     data["home_win_rate_long"] = _rolling_team_stat(
-        data, "home_team", "home_win", window=long_window
+        data, "home_team", "home_win", window=long_window, default=MLB_AVG_WIN_RATE
     )
     data["away_win_rate_long"] = _rolling_team_stat(
-        data, "away_team", "away_win", window=long_window
+        data, "away_team", "away_win", window=long_window, default=MLB_AVG_WIN_RATE
     )
 
     data["home_runs_avg_short"] = _rolling_team_stat(
-        data, "home_team", "home_score", window=short_window
+        data, "home_team", "home_score", window=short_window, default=MLB_AVG_RUNS_PER_GAME
     )
     data["away_runs_avg_short"] = _rolling_team_stat(
-        data, "away_team", "away_score", window=short_window
+        data, "away_team", "away_score", window=short_window, default=MLB_AVG_RUNS_PER_GAME
     )
 
     # Additional robust features
     data["home_runs_avg_long"] = _rolling_team_stat(
-        data, "home_team", "home_score", window=long_window
+        data, "home_team", "home_score", window=long_window, default=MLB_AVG_RUNS_PER_GAME
     )
     data["away_runs_avg_long"] = _rolling_team_stat(
-        data, "away_team", "away_score", window=long_window
+        data, "away_team", "away_score", window=long_window, default=MLB_AVG_RUNS_PER_GAME
     )
 
     # Win-rate differential (home advantage signal)
@@ -121,16 +111,16 @@ def engineer_features(
     # Weather normalization for indoor stadiums (vectorized)
     indoor_mask = data["home_team"].apply(lambda t: get_stadium_info(t)[2])
     if indoor_mask.any():
-        data.loc[indoor_mask, "temperature_f"] = 72.0
+        data.loc[indoor_mask, "temperature_f"] = INDOOR_TEMP_F
         data.loc[indoor_mask, "wind_mph"] = 0.0
         data.loc[indoor_mask, "precipitation"] = 0.0
 
     data["temp_f"] = data.get(
-        "temperature_f", pd.Series(70.0, index=data.index)
-    ).fillna(70.0)
-    data["wind_mph"] = data.get("wind_mph", pd.Series(5.0, index=data.index)).fillna(
-        5.0
-    )
+        "temperature_f", pd.Series(DEFAULT_TEMP_F, index=data.index)
+    ).fillna(DEFAULT_TEMP_F)
+    data["wind_mph"] = data.get(
+        "wind_mph", pd.Series(DEFAULT_WIND_MPH, index=data.index)
+    ).fillna(DEFAULT_WIND_MPH)
     data["precipitation"] = data.get(
         "precipitation", pd.Series(0.0, index=data.index)
     ).fillna(0.0)
@@ -139,53 +129,22 @@ def engineer_features(
     data["is_weekend"] = data["game_date"].dt.dayofweek.isin([5, 6]).astype(int)
 
     # Statcast advanced metrics (launch speed, launch angle, estimated BA, estimated wOBA)
-    if "launch_speed_mean" in data.columns:
-        data["launch_speed_mean"] = pd.to_numeric(
-            data["launch_speed_mean"], errors="coerce"
-        ).fillna(88.8)
-    else:
-        data["launch_speed_mean"] = 88.8
-        _defaults_used.append("launch_speed_mean=88.8")
-
-    if "launch_speed_max" in data.columns:
-        data["launch_speed_max"] = pd.to_numeric(
-            data["launch_speed_max"], errors="coerce"
-        ).fillna(95.0)
-    else:
-        data["launch_speed_max"] = 95.0
-        _defaults_used.append("launch_speed_max=95.0")
-
-    if "launch_angle_mean" in data.columns:
-        data["launch_angle_mean"] = pd.to_numeric(
-            data["launch_angle_mean"], errors="coerce"
-        ).fillna(12.5)
-    else:
-        data["launch_angle_mean"] = 12.5
-        _defaults_used.append("launch_angle_mean=12.5")
-
-    if "estimated_ba_using_speedangle_mean" in data.columns:
-        data["estimated_ba_using_speedangle_mean"] = pd.to_numeric(
-            data["estimated_ba_using_speedangle_mean"], errors="coerce"
-        ).fillna(0.265)
-    else:
-        data["estimated_ba_using_speedangle_mean"] = 0.265
-        _defaults_used.append("est_BA=0.265")
-
-    if "estimated_woba_using_speedangle_mean" in data.columns:
-        data["estimated_woba_using_speedangle_mean"] = pd.to_numeric(
-            data["estimated_woba_using_speedangle_mean"], errors="coerce"
-        ).fillna(0.330)
-    else:
-        data["estimated_woba_using_speedangle_mean"] = 0.330
-        _defaults_used.append("est_wOBA=0.330")
+    _statcast_cols = {
+        "launch_speed_mean": DEFAULT_LAUNCH_SPEED,
+        "launch_speed_max": DEFAULT_LAUNCH_SPEED_MAX,
+        "launch_angle_mean": DEFAULT_LAUNCH_ANGLE,
+        "estimated_ba_using_speedangle_mean": DEFAULT_EST_BA,
+        "estimated_woba_using_speedangle_mean": DEFAULT_EST_WOBA,
+    }
+    data, _defaults_used = _ensure_numeric_cols(data, _statcast_cols, _defaults_used)
 
     if ("barrel", "sum") in data.columns:
         data["barrels_per_game"] = pd.to_numeric(
             data[("barrel", "sum")], errors="coerce"
-        ).fillna(25)
+        ).fillna(DEFAULT_BARRELS)
     elif "barrels_per_game" not in data.columns:
-        data["barrels_per_game"] = 25
-        _defaults_used.append("barrels_per_game=25")
+        data["barrels_per_game"] = DEFAULT_BARRELS
+        _defaults_used.append(f"barrels_per_game={DEFAULT_BARRELS}")
 
     if _defaults_used:
         logger.info("Feature defaults used (data not available): %s", ", ".join(_defaults_used))
@@ -254,7 +213,7 @@ def engineer_features(
     }
     for col in feature_cols:
         if col in _odds_cols:
-            data[col] = data[col].fillna(-110.0)
+            data[col] = data[col].fillna(DEFAULT_ODDS)
         else:
             data[col] = data[col].fillna(0.0)
     X = data[feature_cols].astype(float)
@@ -266,17 +225,37 @@ def engineer_features(
 # ---------------------------------------------------------------------------
 
 
+def _ensure_numeric_cols(
+    data: pd.DataFrame,
+    col_defaults: dict[str, float],
+    defaults_used: list[str],
+) -> tuple[pd.DataFrame, list[str]]:
+    """Ensure columns exist and are numeric, filling missing with defaults."""
+    for col, default in col_defaults.items():
+        if col in data.columns:
+            data[col] = pd.to_numeric(data[col], errors="coerce").fillna(default)
+        else:
+            data[col] = default
+            defaults_used.append(f"{col}={default}")
+    return data, defaults_used
+
+
 def _rolling_team_stat(
-    df: pd.DataFrame, team_col: str, value_col: str, window: int
+    df: pd.DataFrame,
+    team_col: str,
+    value_col: str,
+    window: int,
+    default: float = 0.0,
 ) -> pd.Series:
     """Vectorised per-team rolling mean using groupby + rolling.
 
     ``shift(1)`` ensures we only use *prior* games (no look-ahead).
+    *default* is used when no prior games exist (instead of zero).
     """
     return (
         df.groupby(team_col)[value_col]
         .transform(lambda s: s.shift(1).rolling(window, min_periods=1).mean())
-        .fillna(0.0)
+        .fillna(default)
     )
 
 
@@ -289,7 +268,7 @@ def _rest_days(df: pd.DataFrame, team_col: str) -> pd.Series:
         .groupby(team_col)["_ts"]
         .transform(lambda s: s.diff() / 86400)  # seconds → days
     )
-    return rest.fillna(3.0).clip(lower=0.0)
+    return rest.fillna(DEFAULT_REST_DAYS).clip(lower=0.0)
 
 
 def _ml_to_implied_prob(ml: float) -> float:
