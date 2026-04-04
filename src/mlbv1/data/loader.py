@@ -682,27 +682,46 @@ class WeatherEnricher:
         self.api_key = api_key
 
     def enrich(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Add temperature_f, wind_mph, precipitation columns via weather lookups."""
+        """Add temperature_f, wind_mph, precipitation columns via weather lookups.
+
+        Batches requests by unique (stadium, date) to avoid redundant API calls
+        when multiple bookmaker rows share the same game.
+        """
         if not self.api_key:
             logger.info("No Visual Crossing API key — skipping weather enrichment")
             return df
 
         out = df.copy()
-        temps, winds, precips = [], [], []
 
+        # Build a cache keyed on (team, date_str) to avoid N+1 calls.
+        cache: dict[tuple[str, str], dict[str, float]] = {}
+        unique_lookups: set[tuple[str, str]] = set()
         for _, row in out.iterrows():
-            team = row.get("home_team", "")
-            game_date = row.get("game_date")
-            coords = _STADIUM_COORDS.get(str(team))
-            if coords and game_date is not None:
-                weather = self._fetch_weather(coords, game_date)
-                temps.append(weather.get("temp", 70.0))
-                winds.append(weather.get("windspeed", 5.0))
-                precips.append(weather.get("precip", 0.0))
-            else:
-                temps.append(70.0)
-                winds.append(5.0)
-                precips.append(0.0)
+            team = str(row.get("home_team", ""))
+            try:
+                date_str = pd.Timestamp(row.get("game_date")).strftime("%Y-%m-%d")
+            except Exception:
+                continue
+            if _STADIUM_COORDS.get(team):
+                unique_lookups.add((team, date_str))
+
+        logger.info("Weather enrichment: %d unique (stadium, date) lookups", len(unique_lookups))
+        for team, date_str in unique_lookups:
+            coords = _STADIUM_COORDS[team]
+            cache[(team, date_str)] = self._fetch_weather(coords, date_str)
+
+        # Map cached results back to each row.
+        temps, winds, precips = [], [], []
+        for _, row in out.iterrows():
+            team = str(row.get("home_team", ""))
+            try:
+                date_str = pd.Timestamp(row.get("game_date")).strftime("%Y-%m-%d")
+            except Exception:
+                date_str = ""
+            weather = cache.get((team, date_str), {})
+            temps.append(weather.get("temp", 70.0))
+            winds.append(weather.get("windspeed", 5.0))
+            precips.append(weather.get("precip", 0.0))
 
         out["temperature_f"] = temps
         out["wind_mph"] = winds
@@ -710,13 +729,9 @@ class WeatherEnricher:
         return out
 
     def _fetch_weather(
-        self, coords: tuple[float, float], date: Any
+        self, coords: tuple[float, float], date_str: str
     ) -> dict[str, float]:
-        """Fetch weather for a single location + date."""
-        try:
-            date_str = pd.Timestamp(date).strftime("%Y-%m-%d")
-        except Exception:
-            return {}
+        """Fetch weather for a single location + date (YYYY-MM-DD)."""
         lat, lon = coords
         params = urlencode(
             {
