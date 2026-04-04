@@ -13,6 +13,7 @@ dist/
 .venv2/
 .venv_old/
 .venv_ci/
+.venv314_test/
 venv/
 
 # Testing

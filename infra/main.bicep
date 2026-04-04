@@ -1,7 +1,7 @@
 param location string = 'eastus'
 param namePrefix string = 'mlb-gbsv-v1-az'
 param servicePrincipalObjectId string = ''
-param enableRoleAssignments bool = false
+param enableRoleAssignments bool = true
 param sqlAdminLogin string = 'mlbadmin'
 @secure()
 param sqlAdminPassword string = newGuid()
@@ -14,21 +14,39 @@ param teamsChannelId string = ''
 @secure()
 param teamsWebhookUrl string = ''
 param dailyCronSchedule string = '0 15 * * *' // 15:00 UTC = 11:00 AM ET (before first pitch)
+param runtimeEnvironment string = 'aca'
+param trackingDbPath string = 'artifacts/tracking.db'
+param slateTimezone string = 'America/Chicago'
+param allowSyntheticFallback bool = false
+param liveContextDays int = 120
+param triggerMinIntervalSeconds string = '30'
+param acrNameOverride string = ''
+param storageAccountNameOverride string = ''
+param keyVaultNameOverride string = ''
+param sqlServerNameOverride string = ''
+param acaKvRoleAssignmentNameOverride string = ''
 
-var acrName = replace('${namePrefix}-acr', '-', '')
-var storageName = replace('${namePrefix}-sto', '-', '')
-var kvName = '${namePrefix}-kv'
+var uniqueSuffix = take(uniqueString(subscription().subscriptionId, resourceGroup().id, namePrefix), 6)
+var compactPrefix = toLower(replace(namePrefix, '-', ''))
+var generatedStorageName = take('${take(compactPrefix, 18)}${uniqueSuffix}', 24)
+var generatedKvName = take('${take(namePrefix, 14)}-${uniqueSuffix}-kv', 24)
 var acaEnvName = '${namePrefix}-acaenv'
 var acaName = '${namePrefix}-aca'
 var logAnalyticsName = '${namePrefix}-logs'
 var appInsightsName = '${namePrefix}-ai'
-var sqlServerName = replace('${namePrefix}-sql', '-', '')
+var generatedSqlServerName = take('${take(compactPrefix, 54)}${uniqueSuffix}sql', 63)
+var generatedAcrName = take('${take(compactPrefix, 41)}${uniqueSuffix}acr', 50)
+var storageName = !empty(storageAccountNameOverride) ? storageAccountNameOverride : generatedStorageName
+var kvName = !empty(keyVaultNameOverride) ? keyVaultNameOverride : generatedKvName
+var sqlServerName = !empty(sqlServerNameOverride) ? sqlServerNameOverride : generatedSqlServerName
+var acrName = !empty(acrNameOverride) ? acrNameOverride : generatedAcrName
 var sqlDbName = 'mlb-tracking'
 var kvSecretsUserRoleId = '4633458b-17de-408a-b874-0445c86b69e6'
 var acaJobName = '${namePrefix}-daily-trigger'
 var hasTriggerApiKey = !empty(triggerApiKey)
 var hasTeamsConfig = !empty(teamsGroupId) && !empty(teamsChannelId)
 var hasTeamsWebhook = !empty(teamsWebhookUrl)
+var acaKvRoleAssignmentName = !empty(acaKvRoleAssignmentNameOverride) ? acaKvRoleAssignmentNameOverride : guid(keyVault.id, acaName, kvSecretsUserRoleId)
 
 resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
   name: acrName
@@ -227,8 +245,28 @@ resource acaApp 'Microsoft.App/containerApps@2023-05-01' = {
                 secretRef: 'appinsights-connection-string'
               }
               {
+                name: 'MLBV1_ENVIRONMENT'
+                value: runtimeEnvironment
+              }
+              {
                 name: 'AZURE_KEY_VAULT_NAME'
                 value: kvName
+              }
+              {
+                name: 'TRACKING_DB_PATH'
+                value: trackingDbPath
+              }
+              {
+                name: 'SLATE_TIMEZONE'
+                value: slateTimezone
+              }
+              {
+                name: 'ALLOW_SYNTHETIC_FALLBACK'
+                value: string(allowSyntheticFallback)
+              }
+              {
+                name: 'LIVE_CONTEXT_DAYS'
+                value: string(liveContextDays)
               }
               {
                 name: 'SQL_CONNECTION_STRING'
@@ -237,6 +275,10 @@ resource acaApp 'Microsoft.App/containerApps@2023-05-01' = {
               {
                 name: 'ALLOW_UNAUTH_TRIGGER'
                 value: string(allowUnauthTrigger)
+              }
+              {
+                name: 'TRIGGER_MIN_INTERVAL_SECONDS'
+                value: triggerMinIntervalSeconds
               }
             ],
             hasTriggerApiKey
@@ -366,7 +408,7 @@ resource dailyTriggerJob 'Microsoft.App/jobs@2023-05-01' = {
 
 // Grant Container App managed identity access to Key Vault
 resource acaKvRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (enableRoleAssignments) {
-  name: guid(keyVault.id, acaApp.name, kvSecretsUserRoleId)
+  name: acaKvRoleAssignmentName
   scope: keyVault
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', kvSecretsUserRoleId)
@@ -376,6 +418,7 @@ resource acaKvRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01
 }
 
 output acrLoginServer string = acr.properties.loginServer
+output acrName string = acr.name
 output storageAccountName string = storage.name
 output containerAppName string = acaApp.name
 output keyVaultName string = keyVault.name

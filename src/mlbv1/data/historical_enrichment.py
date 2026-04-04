@@ -15,6 +15,36 @@ from mlbv1.data.mapping import normalize_team
 logger = logging.getLogger(__name__)
 
 
+def fetch_mlb_standings() -> dict[str, dict[str, int]]:
+    """Fetch current MLB standings from Stats API.
+
+    Returns: {team_abbr: {"wins": W, "losses": L}} or empty dict on failure.
+    """
+    from datetime import datetime, timezone
+    season = datetime.now(timezone.utc).year
+    url = f"https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season={season}"
+    try:
+        with urlopen(url, timeout=15) as resp:  # noqa: S310
+            data = json.loads(resp.read())
+    except (URLError, OSError, json.JSONDecodeError) as exc:
+        logger.warning("Could not fetch MLB standings: %s", exc)
+        return {}
+
+    standings: dict[str, dict[str, int]] = {}
+    for record in data.get("records", []):
+        for team_rec in record.get("teamRecords", []):
+            abbr = normalize_team(
+                team_rec.get("team", {}).get("abbreviation", "")
+                or team_rec.get("team", {}).get("name", "")
+            )
+            if abbr:
+                standings[abbr] = {
+                    "wins": int(team_rec.get("wins", 0)),
+                    "losses": int(team_rec.get("losses", 0)),
+                }
+    return standings
+
+
 class LahmanDataEnricher:
     """Enrich training data with Lahman Database (pitcher ERAs, team stats, etc.)."""
 
@@ -171,6 +201,8 @@ class LahmanDataEnricher:
         # Fallback name-based merge if IDs were not available.
         if "Name" in stats.columns and "ERA" in stats.columns and "W" in stats.columns:
             name_stats = stats[["Name", "ERA", "W"]].dropna(subset=["Name"]).copy()
+            # CRITICAL: dedup by Name to prevent row explosion from multi-year stats
+            name_stats = name_stats.drop_duplicates(subset=["Name"], keep="last")
             if "home_pitcher_name" in df.columns:
                 home_stats = name_stats.rename(
                     columns={
@@ -663,4 +695,15 @@ def enrich_training_data_with_historical_sources(
             logger.warning("Retrosheet enrichment failed: %s", e)
 
     logger.info("Total enriched dataset: %d games", len(df))
+
+    # Safety: remove any duplicate game rows introduced by enrichment merges
+    if "home_team" in df.columns and "away_team" in df.columns:
+        pre = len(df)
+        df = df.drop_duplicates(subset=["home_team", "away_team"]).reset_index(drop=True)
+        if len(df) < pre:
+            logger.warning(
+                "Removed %d duplicate game rows from enrichment (kept %d unique)",
+                pre - len(df), len(df),
+            )
+
     return df

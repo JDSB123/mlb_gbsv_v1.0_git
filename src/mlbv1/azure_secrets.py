@@ -6,6 +6,8 @@ import logging
 import os
 from typing import Any
 
+from mlbv1.environment import detect_environment
+
 logger = logging.getLogger(__name__)
 
 
@@ -21,7 +23,7 @@ class AzureSecretsProvider:
         """
         self.vault_name = vault_name or os.getenv("AZURE_KEY_VAULT_NAME", "")
         self._client: Any = None
-        self._enabled = bool(self.vault_name)
+        self._enabled = bool(self.vault_name) and detect_environment() != "test"
 
         if self._enabled:
             try:
@@ -75,7 +77,7 @@ class AzureSecretsProvider:
                 )
                 return value
 
-        logger.warning("Secret '%s' not found in Key Vault or environment", secret_name)
+        logger.debug("Secret '%s' not found in Key Vault or environment", secret_name)
         return ""
 
     @property

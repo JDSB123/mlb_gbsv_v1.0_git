@@ -7,7 +7,7 @@ name = "mlbv1"
 version = "1.0.0"
 description = "MLB spread prediction pipeline — robust ensemble with tracking, alerts & dashboard"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 license = { text = "MIT" }
 authors = [{ name = "JDSB" }]
 dependencies = [
@@ -53,10 +53,12 @@ all = [
   "pandas-stubs>=2.1.0",
 ]
 
-[project.scripts]
-mlbv1-train = "mlbv1.cli:train_cli"
-mlbv1-predict = "mlbv1.cli:predict_cli"
-mlbv1-dashboard = "mlbv1.dashboard.app:main"
+# NOTE: CLI entry points removed — mlbv1.cli module does not exist.
+# Use `python scripts/train.py` and `python scripts/predict.py` directly.
+# [project.scripts]
+# mlbv1-train = "mlbv1.cli:train_cli"
+# mlbv1-predict = "mlbv1.cli:predict_cli"
+# mlbv1-dashboard = "mlbv1.dashboard.app:main"
 
 [project.urls]
 Homepage = "https://github.com/jdsb123/mlb_gbsv_v1.0_git"

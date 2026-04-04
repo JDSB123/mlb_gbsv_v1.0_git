@@ -21,6 +21,7 @@ class EmailAlert:
         sender_email: str,
         sender_password: str,
         recipient_email: str,
+        smtp_username: str | None = None,
         use_tls: bool = True,
     ) -> None:
         self.smtp_host = smtp_host
@@ -28,6 +29,7 @@ class EmailAlert:
         self.sender_email = sender_email
         self.sender_password = sender_password
         self.recipient_email = recipient_email
+        self.smtp_username = smtp_username or sender_email
         self.use_tls = use_tls
 
     def send_predictions(
@@ -144,7 +146,7 @@ class EmailAlert:
             else:
                 server = smtplib.SMTP_SSL(self.smtp_host, self.smtp_port)
 
-            server.login(self.sender_email, self.sender_password)
+            server.login(self.smtp_username, self.sender_password)
             server.sendmail(self.sender_email, self.recipient_email, msg.as_string())
             server.quit()
             logger.info("Email sent: %s", subject)

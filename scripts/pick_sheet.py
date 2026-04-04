@@ -16,7 +16,6 @@ from __future__ import annotations
 import argparse
 import csv
 import logging
-import os
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -26,16 +25,19 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 
-# ── project imports ──────────────────────────────────────────────────────
 from mlbv1.config import AppConfig
-from mlbv1.data.historical_enrichment import enrich_training_data_with_historical_sources
-from mlbv1.data.loader import MLBStatsAPILoader, OddsAPILoader
-from mlbv1.data.preprocessor import ProcessedData, preprocess
+from mlbv1.data.historical_enrichment import (
+    enrich_training_data_with_historical_sources,
+    fetch_mlb_standings,
+)
+from mlbv1.data.loader import OddsAPILoader
 from mlbv1.data.slate_filter import (
     DEFAULT_SLATE_TIMEZONE,
     filter_pregame_games_for_date,
 )
-from mlbv1.features.engineer import FeatureSet, engineer_features
+
+# ── project imports ──────────────────────────────────────────────────────
+from mlbv1.environment import bootstrap_environment
 from mlbv1.models.predictor import PredictionResult, load_model, predict
 from mlbv1.picks.odds_math import (
     american_to_decimal,
@@ -49,7 +51,10 @@ from mlbv1.picks.quality import (
     write_audit_artifact,
 )
 from mlbv1.picks.rationale import build_rationale
+from mlbv1.pipeline.feature_prep import prepare_live_features_with_history
 from mlbv1.tracking.database import TrackingDB
+
+bootstrap_environment()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -103,18 +108,15 @@ def _build_pick_rows(
         prob_accum: dict[str, list[float]] = {}
 
         for _model_name, result in model_results.items():
-            idx = None
-            for i in range(len(result.market_probabilities)):
-                if result.market_probabilities.index[i] == gi:
-                    idx = i
-                    break
-            if idx is None:
-                idx = gi if gi < len(result.market_probabilities) else None
-            if idx is None:
+            if gi >= len(result.market_probabilities):
+                logger.warning(
+                    "Model %s has %d rows but game index is %d — skipping",
+                    _model_name, len(result.market_probabilities), gi,
+                )
                 continue
 
-            mp = result.market_probabilities.iloc[idx]
-            er = result.expected_runs.iloc[idx]
+            mp = result.market_probabilities.iloc[gi]
+            er = result.expected_runs.iloc[gi]
 
             for col in mp.index:
                 prob_accum.setdefault(col, []).append(float(mp[col]))
@@ -253,6 +255,7 @@ def _build_pick_rows(
                     home=home,
                     away=away,
                     feat=feat,
+                    game_info=game.to_dict(),
                 )
 
                 rows.append({
@@ -413,79 +416,6 @@ def _build_market_segments(  # noqa: PLR0913
     return segments
 
 
-def _prepare_live_features_with_history(
-    model_input: pd.DataFrame,
-    config: AppConfig,
-) -> tuple[ProcessedData, FeatureSet, int]:
-    """Build live inference features with recent historical context rows."""
-    history_days = int(os.getenv("LIVE_CONTEXT_DAYS", "120"))
-    live = model_input.copy().reset_index(drop=True)
-    live["_is_live"] = 1
-
-    hist = pd.DataFrame()
-    end = datetime.now(tz=UTC)
-    start = end - pd.Timedelta(days=history_days)
-    try:
-        hist_loader = MLBStatsAPILoader(
-            start_date=start.strftime("%Y-%m-%d"),
-            end_date=end.strftime("%Y-%m-%d"),
-        )
-        hist = hist_loader.load()
-    except Exception as exc:
-        logger.warning("Historical context load failed; using live-only features: %s", exc)
-
-    hist_rows = 0
-    if not hist.empty:
-        hist = hist.copy()
-        hist_rows = len(hist)
-        hist["_is_live"] = 0
-        for col in live.columns:
-            if col not in hist.columns:
-                hist[col] = pd.NA
-        for col in hist.columns:
-            if col not in live.columns:
-                live[col] = pd.NA
-        combined = pd.concat([hist, live], ignore_index=True, sort=False)
-    else:
-        combined = live
-
-    processed_all = preprocess(combined)
-    features_all = engineer_features(
-        processed_all.features,
-        short_window=config.features.rolling_window_short,
-        long_window=config.features.rolling_window_long,
-    )
-
-    live_mask = (
-        processed_all.features["_is_live"].fillna(0).astype(int) == 1
-        if "_is_live" in processed_all.features.columns
-        else pd.Series([True] * len(processed_all.features), index=processed_all.features.index)
-    )
-
-    live_features_df = (
-        processed_all.features.loc[live_mask]
-        .drop(columns=["_is_live"], errors="ignore")
-        .reset_index(drop=True)
-    )
-    live_target_df = processed_all.target.loc[live_mask].reset_index(drop=True)
-    live_metadata_df = processed_all.metadata.loc[live_mask].reset_index(drop=True)
-    live_targets_df = (
-        processed_all.targets.loc[live_mask].reset_index(drop=True)
-        if processed_all.targets is not None
-        else None
-    )
-    live_X = features_all.X.loc[live_mask].reset_index(drop=True)
-
-    processed_live = ProcessedData(
-        features=live_features_df,
-        target=live_target_df,
-        metadata=live_metadata_df,
-        targets=live_targets_df,
-    )
-    feature_live = FeatureSet(X=live_X, feature_names=list(live_X.columns))
-    return processed_live, feature_live, hist_rows
-
-
 # ═════════════════════════════════════════════════════════════════════════
 # Main
 # ═════════════════════════════════════════════════════════════════════════
@@ -495,7 +425,8 @@ def main() -> None:
     parser.add_argument("--date", type=str, default=None, help="Date (YYYY-MM-DD)")
     args = parser.parse_args()
 
-    slate_timezone = os.getenv("SLATE_TIMEZONE", DEFAULT_SLATE_TIMEZONE)
+    config = AppConfig.load()
+    slate_timezone = config.runtime.slate_timezone or DEFAULT_SLATE_TIMEZONE
     try:
         now_local = datetime.now(tz=ZoneInfo(slate_timezone))
     except Exception:
@@ -507,9 +438,11 @@ def main() -> None:
     logger.info("Generating MLB pick sheet for %s", today)
 
     # ── 1. Load config & today's odds ────────────────────────────────
-    config = AppConfig.load()
     config = config.override(data={"loader": "odds_api"})
-    loader = OddsAPILoader(api_key=config.data.api_key, base_url=config.data.api_base_url)
+    loader = OddsAPILoader(
+        api_key=config.services.odds_api_key or config.data.api_key,
+        base_url=config.data.api_base_url,
+    )
     raw_games_df = loader.load()
     logger.info("Loaded %d raw game/bookmaker rows", len(raw_games_df))
 
@@ -527,7 +460,7 @@ def main() -> None:
         logger.warning("No not-started games found for %s", today)
         return
 
-    db = TrackingDB("artifacts/tracking.db")
+    db = TrackingDB(config.runtime.tracking_db_path)
     logging.basicConfig(level=logging.INFO, force=True)
     logger.disabled = False
 
@@ -542,7 +475,34 @@ def main() -> None:
         include_probable_pitchers=True, target_date=today,
     )
 
-    processed, features, hist_rows = _prepare_live_features_with_history(model_input, config)
+    # Safety: ensure enrichment didn't duplicate game rows
+    pre_enrich = len(model_input)
+    model_input = model_input.drop_duplicates(
+        subset=["home_team", "away_team"]
+    ).reset_index(drop=True)
+    if len(model_input) < pre_enrich:
+        logger.warning(
+            "Enrichment produced %d duplicate rows — deduped to %d unique games",
+            pre_enrich - len(model_input), len(model_input),
+        )
+
+    # Attach current W-L standings to each game
+    standings = fetch_mlb_standings()
+    if standings:
+        model_input["home_record"] = model_input["home_team"].map(
+            lambda t: f"{standings[t]['wins']}-{standings[t]['losses']}" if t in standings else ""
+        )
+        model_input["away_record"] = model_input["away_team"].map(
+            lambda t: f"{standings[t]['wins']}-{standings[t]['losses']}" if t in standings else ""
+        )
+        logger.info("Attached MLB standings for %d teams", len(standings))
+    else:
+        model_input["home_record"] = ""
+        model_input["away_record"] = ""
+
+    processed, features, hist_rows = prepare_live_features_with_history(
+        model_input, config
+    )
     logger.info("Engineered live features using %d contextual historical games", hist_rows)
 
     # Cold-start detection

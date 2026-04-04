@@ -65,7 +65,7 @@ This script will:
 1. ✅ Verify prerequisites (Azure CLI, Docker)
 2. ✅ Create resource group
 3. ✅ Deploy Bicep infrastructure (Key Vault, ACR, Container Apps, SQL DB, App Insights)
-4. ✅ Upload secrets from .env file
+4. ✅ Upload secrets from the repo-local `.env` file
 5. ✅ Build and push Docker image
 6. ✅ Deploy Container App with latest image
 7. ✅ Verify health endpoint
@@ -77,7 +77,7 @@ This script will:
 Copy the template and add your API keys:
 
 ```powershell
-Copy-Item .env.template .env
+Copy-Item .env.example .env
 notepad .env
 ```
 
@@ -87,6 +87,10 @@ Fill in at minimum:
 - `BETS_API_KEY` - Get from [BetsAPI](https://betsapi.com/)
 - `VISUAL_CROSSING_API_KEY` - Get from [Visual Crossing](https://www.visualcrossing.com/)
 - `DISCORD_WEBHOOK_URL` (optional) - For bet alerts
+
+The deployment scripts prefer explicit arguments first, then this repo's `.env`,
+then ambient process environment. That keeps deployments from accidentally picking
+up values from another shell or project.
 
 #### **Step 2: Deploy Infrastructure**
 
@@ -110,6 +114,11 @@ Resources created:
 - 📊 Application Insights + Log Analytics (observability)
 - 🗄️ Azure SQL Database (persistent storage)
 - 💾 Storage Account (model artifacts)
+
+The ACA template also injects the shared runtime settings used by the app:
+`MLBV1_ENVIRONMENT`, `TRACKING_DB_PATH`, `SLATE_TIMEZONE`,
+`ALLOW_SYNTHETIC_FALLBACK`, `LIVE_CONTEXT_DAYS`, and
+`TRIGGER_MIN_INTERVAL_SECONDS`.
 
 #### **Step 3: Upload Secrets**
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from mlbv1.config import AppConfig, FeatureConfig, ModelConfig
+from mlbv1.config import AlertConfig, AppConfig, FeatureConfig, ModelConfig
 
 
 class TestAppConfig:
@@ -64,6 +64,19 @@ class TestAppConfig:
         overridden = cfg.override(data={"loader": "action_network"})
         assert overridden.data.email == "an@example.com"
 
+    def test_runtime_values_load_from_env(self, monkeypatch) -> None:
+        monkeypatch.setenv("TRACKING_DB_PATH", "custom/tracking.db")
+        monkeypatch.setenv("ALLOW_SYNTHETIC_FALLBACK", "true")
+        monkeypatch.setenv("LIVE_CONTEXT_DAYS", "45")
+        monkeypatch.setenv("SLATE_TIMEZONE", "America/New_York")
+
+        cfg = AppConfig.load()
+
+        assert cfg.runtime.tracking_db_path == "custom/tracking.db"
+        assert cfg.runtime.allow_synthetic_fallback is True
+        assert cfg.runtime.live_context_days == 45
+        assert cfg.runtime.slate_timezone == "America/New_York"
+
 
 class TestFeatureConfig:
     def test_defaults(self) -> None:
@@ -78,3 +91,33 @@ class TestModelConfig:
         assert mc.type == "all"
         assert mc.random_forest.n_estimators == 300
         assert mc.ridge_regression.C == 1.0
+
+
+class TestAlertConfig:
+    def test_supports_current_smtp_names(self, monkeypatch) -> None:
+        monkeypatch.setenv("SMTP_HOST", "smtp.example.com")
+        monkeypatch.setenv("SMTP_PORT", "2525")
+        monkeypatch.setenv("SMTP_USER", "login@example.com")
+        monkeypatch.setenv("SMTP_FROM", "alerts@example.com")
+        monkeypatch.setenv("SMTP_TO", "ops@example.com")
+
+        cfg = AlertConfig.from_env()
+
+        assert cfg.smtp_host == "smtp.example.com"
+        assert cfg.smtp_port == 2525
+        assert cfg.smtp_login == "login@example.com"
+        assert cfg.smtp_sender == "alerts@example.com"
+        assert cfg.smtp_recipient == "ops@example.com"
+
+    def test_supports_legacy_smtp_names(self, monkeypatch) -> None:
+        monkeypatch.setenv("SMTP_EMAIL", "legacy@example.com")
+        monkeypatch.setenv("ALERT_RECIPIENT", "recipient@example.com")
+        monkeypatch.delenv("SMTP_USER", raising=False)
+        monkeypatch.delenv("SMTP_FROM", raising=False)
+        monkeypatch.delenv("SMTP_TO", raising=False)
+
+        cfg = AlertConfig.from_env()
+
+        assert cfg.smtp_login == "legacy@example.com"
+        assert cfg.smtp_sender == "legacy@example.com"
+        assert cfg.smtp_recipient == "recipient@example.com"

@@ -12,7 +12,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import os
 import sys
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -38,6 +37,7 @@ from mlbv1.data.slate_filter import (
     DEFAULT_SLATE_TIMEZONE,
     filter_pregame_games_for_date,
 )
+from mlbv1.environment import bootstrap_environment
 from mlbv1.features.engineer import FeatureSet, engineer_features
 from mlbv1.metrics import evaluate
 from mlbv1.models.predictor import load_model, predict
@@ -51,6 +51,7 @@ from mlbv1.tracking.database import PredictionRecord, RunRecord, TrackingDB
 from mlbv1.tracking.roi import BankrollConfig, BankrollManager
 
 # Configure telemetry at module level
+bootstrap_environment()
 configure_telemetry()
 
 logging.basicConfig(
@@ -72,7 +73,7 @@ def main() -> None:
     )
     parser.add_argument("--no-alerts", action="store_true", help="Skip sending alerts")
     parser.add_argument(
-        "--db", type=str, default="artifacts/tracking.db", help="Tracking DB path"
+        "--db", type=str, default=None, help="Tracking DB path"
     )
     parser.add_argument("--config", type=str, default=None, help="Config JSON path")
     args = parser.parse_args()
@@ -81,7 +82,7 @@ def main() -> None:
     if args.loader:
         config = config.override(data={"loader": args.loader})
 
-    db = TrackingDB(args.db)
+    db = TrackingDB(args.db or config.runtime.tracking_db_path)
 
     # Alembic's fileConfig() resets root logger to WARN and disables loggers
     # not listed in alembic.ini.  Re-apply our desired configuration.
@@ -93,7 +94,7 @@ def main() -> None:
     logger.disabled = False
 
     run_id = f"daily-{datetime.now(tz=UTC).strftime('%Y%m%d')}-{uuid.uuid4().hex[:6]}"
-    alerts = AlertManager() if not args.no_alerts else None
+    alerts = AlertManager(config.alerts) if not args.no_alerts else None
 
     db.try_start_pipeline()
 
@@ -113,7 +114,7 @@ def main() -> None:
             train_df = SyntheticDataLoader(num_games=300).load()
 
         # Enrich with weather
-        weather_key = os.getenv("VISUAL_CROSSING_API_KEY", "")
+        weather_key = config.services.visual_crossing_api_key
         if weather_key:
             enricher = WeatherEnricher(weather_key)
             train_df = enricher.enrich(train_df)
@@ -220,7 +221,7 @@ def main() -> None:
         # Step 8: Generate pick sheet & post slate card to Teams
         logger.info("=== Step 8: Pick sheet & Teams slate ===")
         today_str = datetime.now(tz=UTC).strftime("%Y-%m-%d")
-        _generate_and_post_slate(today_str)
+        _generate_and_post_slate(today_str, config)
 
         # Step 9: Model drift detection
         logger.info("=== Step 9: Model drift detection ===")
@@ -242,7 +243,7 @@ def _settle_yesterday(db: TrackingDB, config: AppConfig) -> None:
     logger.info("=== Step 1: Settling yesterday's predictions ===")
 
     try:
-        odds_key = os.getenv("ODDS_API_KEY", "") or (config.data.api_key or "")
+        odds_key = config.services.odds_api_key or (config.data.api_key or "")
         if odds_key:
             from mlbv1.data.loader import OddsAPILoader
 
@@ -265,7 +266,7 @@ def _settle_yesterday(db: TrackingDB, config: AppConfig) -> None:
         logger.warning("Settlement failed: %s", exc)
 
 
-def _generate_and_post_slate(target_date: str) -> None:
+def _generate_and_post_slate(target_date: str, config: AppConfig) -> None:
     """Generate/publish canonical slate and post the Adaptive Card to Teams."""
     import importlib.util
 
@@ -291,7 +292,7 @@ def _generate_and_post_slate(target_date: str) -> None:
         force=True,
     )
 
-    db = TrackingDB(os.getenv("TRACKING_DB_PATH", "artifacts/tracking.db"))
+    db = TrackingDB(config.runtime.tracking_db_path)
     rows = db.get_published_slate(target_date)
 
     if not rows:
@@ -301,9 +302,9 @@ def _generate_and_post_slate(target_date: str) -> None:
     logger.info("Canonical slate has %d rows for %s", len(rows), target_date)
 
     # Post to Teams if configured
-    group_id = os.getenv("TEAMS_GROUP_ID", "")
-    channel_id = os.getenv("TEAMS_CHANNEL_ID", "")
-    webhook_url = os.getenv("TEAMS_WEBHOOK_URL", "")
+    group_id = config.alerts.teams_group_id
+    channel_id = config.alerts.teams_channel_id
+    webhook_url = config.alerts.teams_webhook_url
     if not (group_id and channel_id) and not webhook_url:
         logger.info("Teams not configured — skipping slate post")
         return
@@ -357,8 +358,7 @@ def _load_training_data(config: AppConfig) -> pd.DataFrame:
     except Exception as exc:
         logger.warning("Configured fallback loader failed: %s", exc)
 
-    allow_synth = os.getenv("ALLOW_SYNTHETIC_FALLBACK", "false").lower() == "true"
-    if allow_synth:
+    if config.runtime.allow_synthetic_fallback:
         logger.warning(
             "Falling back to synthetic training data because ALLOW_SYNTHETIC_FALLBACK=true"
         )
@@ -419,7 +419,7 @@ def _train_and_save(
 
 def _load_todays_games(config: AppConfig) -> pd.DataFrame:
     """Load today's games from odds APIs."""
-    slate_timezone = os.getenv("SLATE_TIMEZONE", DEFAULT_SLATE_TIMEZONE)
+    slate_timezone = config.runtime.slate_timezone or DEFAULT_SLATE_TIMEZONE
     try:
         target_date = datetime.now(tz=ZoneInfo(slate_timezone)).strftime("%Y-%m-%d")
     except Exception:
@@ -445,7 +445,7 @@ def _load_todays_games(config: AppConfig) -> pd.DataFrame:
         )
         return filtered
 
-    odds_key = os.getenv("ODDS_API_KEY", "") or (config.data.api_key or "")
+    odds_key = config.services.odds_api_key or (config.data.api_key or "")
     if odds_key:
         try:
             loader = OddsAPILoader(
@@ -458,7 +458,7 @@ def _load_todays_games(config: AppConfig) -> pd.DataFrame:
         except Exception as exc:
             logger.warning("OddsAPI failed: %s", exc)
 
-    bets_key = os.getenv("BETS_API_KEY", "")
+    bets_key = config.services.bets_api_key
     if bets_key:
         try:
             loader_b = BetsAPILoader(
@@ -480,8 +480,7 @@ def _load_todays_games(config: AppConfig) -> pd.DataFrame:
     except Exception as exc:
         logger.warning("Configured today-loader failed: %s", exc)
 
-    allow_synth = os.getenv("ALLOW_SYNTHETIC_FALLBACK", "false").lower() == "true"
-    if allow_synth:
+    if config.runtime.allow_synthetic_fallback:
         logger.warning(
             "No live odds available — using synthetic because ALLOW_SYNTHETIC_FALLBACK=true"
         )

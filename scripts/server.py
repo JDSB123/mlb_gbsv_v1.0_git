@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import hmac
 import logging
-import os
 import signal
 import sys
 import threading
@@ -25,6 +24,8 @@ from zoneinfo import ZoneInfo
 from flask import Flask, jsonify, request, send_from_directory
 from flask.typing import ResponseReturnValue
 
+from mlbv1.config import AppConfig
+from mlbv1.environment import bootstrap_environment
 from mlbv1.observability import configure_telemetry
 from mlbv1.tracking.database import TrackingDB
 
@@ -34,6 +35,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 # Configure telemetry BEFORE any other imports
+bootstrap_environment()
 configure_telemetry()
 
 logging.basicConfig(
@@ -43,12 +45,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+APP_CONFIG = AppConfig.load()
 
 # Global state
 _shutdown_event = threading.Event()
 _pipeline_lock = threading.Lock()
 _last_trigger_monotonic = 0.0
-_tracking_db = TrackingDB(os.getenv("TRACKING_DB_PATH", "artifacts/tracking.db"))
+_tracking_db = TrackingDB(APP_CONFIG.runtime.tracking_db_path)
 
 
 def _as_bool(value: Any) -> bool:
@@ -59,8 +62,8 @@ def _as_bool(value: Any) -> bool:
 
 def _is_trigger_authorized() -> tuple[bool, str | None]:
     """Validate trigger request auth based on environment configuration."""
-    expected_key = os.getenv("TRIGGER_API_KEY", "").strip()
-    allow_unauth = os.getenv("ALLOW_UNAUTH_TRIGGER", "false").lower() == "true"
+    expected_key = APP_CONFIG.runtime.trigger_api_key.strip()
+    allow_unauth = APP_CONFIG.runtime.allow_unauth_trigger
 
     if not expected_key:
         if allow_unauth:
@@ -243,16 +246,16 @@ def api_slate() -> ResponseReturnValue:
 @app.route("/api/slate/teams", methods=["POST"])
 def api_slate_teams() -> ResponseReturnValue:
     """Post the current slate to the configured Teams channel."""
-    teams_url = os.getenv("TEAMS_WEBHOOK_URL", "").strip()
-    teams_group = os.getenv("TEAMS_GROUP_ID", "").strip()
-    teams_channel = os.getenv("TEAMS_CHANNEL_ID", "").strip()
+    teams_url = APP_CONFIG.alerts.teams_webhook_url.strip()
+    teams_group = APP_CONFIG.alerts.teams_group_id.strip()
+    teams_channel = APP_CONFIG.alerts.teams_channel_id.strip()
     if not teams_url and not (teams_group and teams_channel):
         return (
             jsonify(
                 {
                     "status": "error",
                     "message": "Teams not configured. Set TEAMS_GROUP_ID + "
-                    "TEAMS_CHANNEL_ID (Graph API) or TEAMS_WEBHOOK_URL in .env",
+                    "TEAMS_CHANNEL_ID (Graph API) or TEAMS_WEBHOOK_URL in the environment config.",
                 }
             ),
             400,
@@ -304,7 +307,7 @@ def trigger_pipeline() -> ResponseReturnValue:
         logger.warning("Rejected pipeline trigger: %s", auth_error)
         return jsonify({"status": "error", "message": auth_error}), status
 
-    min_interval = float(os.getenv("TRIGGER_MIN_INTERVAL_SECONDS", "30"))
+    min_interval = APP_CONFIG.runtime.trigger_min_interval_seconds
     now_mono = time.monotonic()
 
     with _pipeline_lock:
@@ -392,13 +395,13 @@ def main() -> None:
     logger.info("Health endpoint: http://localhost:8000/health")
 
     # Check configuration
-    appinsights_conn = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING", "")
+    appinsights_conn = APP_CONFIG.runtime.applicationinsights_connection_string
     if appinsights_conn:
         logger.info("Application Insights configured ✓")
     else:
         logger.info("Application Insights not configured (local development mode)")
 
-    kv_name = os.getenv("AZURE_KEY_VAULT_NAME", "")
+    kv_name = APP_CONFIG.runtime.azure_key_vault_name
     if kv_name:
         logger.info("Azure Key Vault configured: %s", kv_name)
     else:

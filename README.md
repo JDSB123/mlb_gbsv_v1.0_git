@@ -57,7 +57,12 @@ python scripts/daily_run.py --loader odds_api
 
 ## Configuration
 
-Configuration via JSON file or environment variables. Copy `.env.example` to `.env` and fill in your keys.
+Configuration is available via JSON or environment variables. Copy `.env.example`
+to `.env` for local development and fill in your keys.
+
+- Local Python entrypoints load the repo-local `.env` automatically.
+- Tests, CI, and Azure Container Apps do not auto-load `.env` unless explicitly enabled.
+- The same keys in `.env.example` are the contract used by runtime code, helper scripts, and ACA.
 
 ```bash
 python scripts/train.py --config config.json
@@ -98,6 +103,9 @@ mypy src
 docker build -t mlbv1:latest .
 docker run --env-file .env --rm mlbv1:latest
 ```
+
+`.env` is ignored by git and excluded from container builds. In ACA, configure the
+same values as environment variables / secrets instead of copying `.env` into the image.
 
 ## Azure Deployment
 

@@ -1,7 +1,7 @@
 param(
   [string]$TaskName = "MLB-Daily-FirstPitch-Trigger",
   [string]$RunAtLocalTime = "06:00",
-  [string]$OutputRoot = "C:\Users\JDSB\OneDrive - Green Bier Capital\Early Stage Sport Ventures - Documents\MLB - Green Bier Sports"
+  [string]$OutputRoot = $(if ($env:MLBV1_OUTPUT_ROOT) { $env:MLBV1_OUTPUT_ROOT } else { "C:\Users\JDSB\OneDrive - Green Bier Capital\Early Stage Sport Ventures - Documents\MLB - Green Bier Sports" })
 )
 
 $ErrorActionPreference = "Stop"

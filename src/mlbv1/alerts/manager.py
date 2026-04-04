@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any
 
 from mlbv1.alerts.discord import DiscordAlert
 from mlbv1.alerts.email_sender import EmailAlert
 from mlbv1.alerts.teams import TeamsAlert
+from mlbv1.config import AlertConfig, AppConfig
 
 logger = logging.getLogger(__name__)
 
@@ -16,23 +16,19 @@ logger = logging.getLogger(__name__)
 class AlertManager:
     """Dispatch alerts to all configured channels.
 
-    Environment variables (set in .env or Azure Key Vault):
-        DISCORD_WEBHOOK_URL  — Discord webhook URL
-        SMTP_HOST            — SMTP server host
-        SMTP_PORT            — SMTP server port (default 587)
-        SMTP_EMAIL           — sender email
-        SMTP_PASSWORD        — sender password
-        ALERT_RECIPIENT      — recipient email
+    Configuration is sourced via AppConfig/AlertConfig so local `.env`,
+    repo-tracked defaults, and ACA environment variables share one contract.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, config: AlertConfig | None = None) -> None:
+        self.config = config or AppConfig.load().alerts
         self.discord: DiscordAlert | None = None
         self.email: EmailAlert | None = None
         self.teams: TeamsAlert | None = None
         self._init_channels()
 
     def _init_channels(self) -> None:
-        webhook = os.getenv("DISCORD_WEBHOOK_URL", "")
+        webhook = self.config.discord_webhook_url
         if webhook:
             try:
                 self.discord = DiscordAlert(webhook)
@@ -40,23 +36,25 @@ class AlertManager:
             except ValueError as exc:
                 logger.warning("Discord setup failed: %s", exc)
 
-        smtp_host = os.getenv("SMTP_HOST", "")
-        smtp_email = os.getenv("SMTP_EMAIL", "")
-        smtp_password = os.getenv("SMTP_PASSWORD", "")
-        recipient = os.getenv("ALERT_RECIPIENT", smtp_email)
-        if smtp_host and smtp_email:
+        smtp_host = self.config.smtp_host
+        smtp_login = self.config.smtp_login
+        smtp_sender = self.config.smtp_sender
+        smtp_password = self.config.smtp_password
+        recipient = self.config.smtp_recipient
+        if smtp_host and smtp_login and smtp_sender and recipient:
             self.email = EmailAlert(
                 smtp_host=smtp_host,
-                smtp_port=int(os.getenv("SMTP_PORT", "587")),
-                sender_email=smtp_email,
+                smtp_port=self.config.smtp_port,
+                sender_email=smtp_sender,
                 sender_password=smtp_password,
                 recipient_email=recipient,
+                smtp_username=smtp_login,
             )
             logger.info("Email alerts enabled")
 
-        teams_url = os.getenv("TEAMS_WEBHOOK_URL", "")
-        teams_group = os.getenv("TEAMS_GROUP_ID", "")
-        teams_channel = os.getenv("TEAMS_CHANNEL_ID", "")
+        teams_url = self.config.teams_webhook_url
+        teams_group = self.config.teams_group_id
+        teams_channel = self.config.teams_channel_id
         if teams_url or (teams_group and teams_channel):
             try:
                 self.teams = TeamsAlert(

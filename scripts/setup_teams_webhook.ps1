@@ -16,13 +16,17 @@
 param(
     [Parameter(Mandatory)]
     [ValidatePattern('^https://')]
-    [string]$WebhookUrl
+    [string]$WebhookUrl,
+
+    [string]$ContainerAppName = 'mlb-gbsv-v2-az-aca',
+    [string]$ResourceGroup    = 'mlb-gbsv-v2-az-rg',
+    [string]$KeyVaultName     = 'mlb-gbsv-v2-az-kv'
 )
 
 $ErrorActionPreference = 'Stop'
-$app  = 'mlb-gbsv-v2-az-aca'
-$rg   = 'mlb-gbsv-v2-az-rg'
-$kv   = 'mlb-gbsv-v2-az-kv'
+$app  = $ContainerAppName
+$rg   = $ResourceGroup
+$kv   = $KeyVaultName
 
 Write-Host "=== Setting Teams webhook URL ===" -ForegroundColor Cyan
 

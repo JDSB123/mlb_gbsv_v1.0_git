@@ -6,6 +6,8 @@ import logging
 import os
 from typing import Any
 
+from mlbv1.environment import bootstrap_environment
+
 logger = logging.getLogger(__name__)
 
 
@@ -14,6 +16,7 @@ def configure_telemetry() -> None:
 
     This should be called once at application startup before any other code runs.
     """
+    bootstrap_environment()
     connection_string = os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING", "")
 
     if not connection_string:

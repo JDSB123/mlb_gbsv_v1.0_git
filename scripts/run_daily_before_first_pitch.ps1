@@ -1,7 +1,9 @@
 param(
-  [string]$OutputRoot = "C:\Users\JDSB\OneDrive - Green Bier Capital\Early Stage Sport Ventures - Documents\MLB - Green Bier Sports",
-  [string]$TriggerUrl = "https://mlb0951-aca.delightfulsea-71b6793e.centralus.azurecontainerapps.io/trigger",
-  [string]$HealthUrl = "https://mlb0951-aca.delightfulsea-71b6793e.centralus.azurecontainerapps.io/health",
+  [string]$OutputRoot = $(if ($env:MLBV1_OUTPUT_ROOT) { $env:MLBV1_OUTPUT_ROOT } else { "C:\Users\JDSB\OneDrive - Green Bier Capital\Early Stage Sport Ventures - Documents\MLB - Green Bier Sports" }),
+  [string]$TriggerUrl = "",
+  [string]$HealthUrl = "",
+  [string]$ResourceGroup = "",
+  [string]$ContainerAppName = "",
   [string]$OddsApiKey = "",
   [string]$TriggerApiKey = "",
   [switch]$SkipWait,
@@ -9,41 +11,90 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$PSNativeCommandUseErrorActionPreference = $false
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$envFilePath = Join-Path $repoRoot ".env"
 
-function Set-EnvFromDotEnv {
+function Get-DotEnvValues {
   param([string]$DotEnvPath)
-  if (!(Test-Path $DotEnvPath)) { return }
+
+  $values = @{}
+  if (!(Test-Path $DotEnvPath)) { return $values }
 
   Get-Content $DotEnvPath | ForEach-Object {
-    if ($_ -match '^\s*#') { return }
-    if ($_ -match '^\s*$') { return }
+    if ($_ -match '^\s*#' -or $_ -match '^\s*$') { return }
     if ($_ -match '^\s*([^=]+)=(.*)$') {
-      $name = $matches[1].Trim()
-      $value = $matches[2].Trim().Trim('"').Trim("'")
-      if (![string]::IsNullOrWhiteSpace($name) -and [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name, "Process"))) {
-        [Environment]::SetEnvironmentVariable($name, $value, "Process")
-      }
+      $values[$matches[1].Trim()] = $matches[2].Trim().Trim('"').Trim("'")
     }
   }
+
+  return $values
 }
 
-function Resolve-SecretValue {
+function Resolve-ConfigValue {
   param(
     [string]$Primary,
-    [string]$EnvName,
-    [string]$FallbackFile
+    [string[]]$Names,
+    [string]$FallbackFile = ""
   )
 
   if (![string]::IsNullOrWhiteSpace($Primary)) { return $Primary }
 
-  $envValue = [Environment]::GetEnvironmentVariable($EnvName, "Process")
-  if (![string]::IsNullOrWhiteSpace($envValue)) { return $envValue }
+  foreach ($name in $Names) {
+    if ($script:DotEnvValues.ContainsKey($name) -and ![string]::IsNullOrWhiteSpace($script:DotEnvValues[$name])) {
+      return [string]$script:DotEnvValues[$name]
+    }
 
-  if (Test-Path $FallbackFile) {
+    $envValue = [Environment]::GetEnvironmentVariable($name, "Process")
+    if (![string]::IsNullOrWhiteSpace($envValue)) { return $envValue }
+  }
+
+  if (![string]::IsNullOrWhiteSpace($FallbackFile) -and (Test-Path $FallbackFile)) {
     return (Get-Content $FallbackFile -Raw).Trim()
   }
 
   return ""
+}
+
+function Resolve-ContainerAppUrls {
+  param(
+    [string]$ResolvedTriggerUrl,
+    [string]$ResolvedHealthUrl,
+    [string]$ResolvedResourceGroup,
+    [string]$ResolvedContainerAppName
+  )
+
+  if (![string]::IsNullOrWhiteSpace($ResolvedTriggerUrl) -and ![string]::IsNullOrWhiteSpace($ResolvedHealthUrl)) {
+    return @{
+      TriggerUrl = $ResolvedTriggerUrl
+      HealthUrl = $ResolvedHealthUrl
+    }
+  }
+
+  if ([string]::IsNullOrWhiteSpace($ResolvedResourceGroup) -or [string]::IsNullOrWhiteSpace($ResolvedContainerAppName)) {
+    throw "Provide TriggerUrl/HealthUrl directly or set ACA_RESOURCE_GROUP + ACA_APP_NAME."
+  }
+
+  $azPath = Get-Command az -ErrorAction SilentlyContinue
+  if (-not $azPath) {
+    throw "Azure CLI is required to derive Container App URLs."
+  }
+
+  $fqdn = az containerapp show `
+    --only-show-errors `
+    --name $ResolvedContainerAppName `
+    --resource-group $ResolvedResourceGroup `
+    --query properties.configuration.ingress.fqdn `
+    --output tsv 2>$null
+
+  if ([string]::IsNullOrWhiteSpace($fqdn)) {
+    throw "Could not resolve Container App ingress FQDN."
+  }
+
+  return @{
+    TriggerUrl = if (![string]::IsNullOrWhiteSpace($ResolvedTriggerUrl)) { $ResolvedTriggerUrl } else { "https://$fqdn/trigger" }
+    HealthUrl = if (![string]::IsNullOrWhiteSpace($ResolvedHealthUrl)) { $ResolvedHealthUrl } else { "https://$fqdn/health" }
+  }
 }
 
 function Get-FirstPitchUtc {
@@ -77,14 +128,22 @@ function Get-FirstPitchUtc {
   return ($times | Sort-Object | Select-Object -First 1)
 }
 
-$repoRoot = Split-Path -Parent $PSScriptRoot
-Set-EnvFromDotEnv -DotEnvPath (Join-Path $repoRoot ".env")
+$script:DotEnvValues = Get-DotEnvValues -DotEnvPath $envFilePath
 
-$resolvedOddsApiKey = Resolve-SecretValue -Primary $OddsApiKey -EnvName "ODDS_API_KEY" -FallbackFile ""
-$resolvedTriggerApiKey = Resolve-SecretValue -Primary $TriggerApiKey -EnvName "TRIGGER_API_KEY" -FallbackFile (Join-Path $repoRoot ".trigger_api_key.txt")
+$resolvedResourceGroup = Resolve-ConfigValue -Primary $ResourceGroup -Names @("ACA_RESOURCE_GROUP", "AZURE_RESOURCE_GROUP")
+$resolvedContainerAppName = Resolve-ConfigValue -Primary $ContainerAppName -Names @("ACA_APP_NAME", "AZURE_CONTAINER_APP")
+$resolvedOddsApiKey = Resolve-ConfigValue -Primary $OddsApiKey -Names @("ODDS_API_KEY")
+$resolvedTriggerApiKey = Resolve-ConfigValue -Primary $TriggerApiKey -Names @("TRIGGER_API_KEY") -FallbackFile (Join-Path $repoRoot ".trigger_api_key.txt")
+$resolvedTriggerUrl = Resolve-ConfigValue -Primary $TriggerUrl -Names @("MLB_TRIGGER_URL")
+$resolvedHealthUrl = Resolve-ConfigValue -Primary $HealthUrl -Names @("MLB_HEALTH_URL")
+$resolvedUrls = Resolve-ContainerAppUrls `
+  -ResolvedTriggerUrl $resolvedTriggerUrl `
+  -ResolvedHealthUrl $resolvedHealthUrl `
+  -ResolvedResourceGroup $resolvedResourceGroup `
+  -ResolvedContainerAppName $resolvedContainerAppName
 
 if ([string]::IsNullOrWhiteSpace($resolvedTriggerApiKey)) {
-  throw "TRIGGER_API_KEY is missing (env or .trigger_api_key.txt)."
+  throw "TRIGGER_API_KEY is missing (argument, .env, process env, or .trigger_api_key.txt)."
 }
 
 $runDate = Get-Date -Format "yyyy-MM-dd"
@@ -102,8 +161,10 @@ $scheduleMeta = [ordered]@{
   trigger_target_utc        = if ($targetUtc) { $targetUtc.ToString("o") } else { $null }
   skip_wait                 = [bool]$SkipWait
   force_trigger_if_no_games = [bool]$ForceTriggerIfNoGames
-  trigger_url               = $TriggerUrl
-  health_url                = $HealthUrl
+  resource_group            = $resolvedResourceGroup
+  container_app_name        = $resolvedContainerAppName
+  trigger_url               = $resolvedUrls.TriggerUrl
+  health_url                = $resolvedUrls.HealthUrl
 }
 $scheduleMeta | ConvertTo-Json -Depth 5 | Out-File -FilePath (Join-Path $outputDir "$runStamp-schedule.json") -Encoding utf8
 
@@ -126,7 +187,7 @@ if (-not $firstPitchUtc -and -not $ForceTriggerIfNoGames) {
 }
 
 try {
-  $healthBefore = Invoke-WebRequest -Uri $HealthUrl -Method Get -UseBasicParsing -TimeoutSec 60
+  $healthBefore = Invoke-WebRequest -Uri $resolvedUrls.HealthUrl -Method Get -UseBasicParsing -TimeoutSec 60
   $healthBefore.Content | Out-File -FilePath $healthBeforePath -Encoding utf8
 }
 catch {
@@ -135,7 +196,7 @@ catch {
 
 $headers = @{ "X-Trigger-Key" = $resolvedTriggerApiKey }
 try {
-  $triggerResp = Invoke-WebRequest -Uri $TriggerUrl -Method Post -Headers $headers -UseBasicParsing -TimeoutSec 120
+  $triggerResp = Invoke-WebRequest -Uri $resolvedUrls.TriggerUrl -Method Post -Headers $headers -UseBasicParsing -TimeoutSec 120
   $triggerResp.Content | Out-File -FilePath $triggerPath -Encoding utf8
 }
 catch {
@@ -145,7 +206,7 @@ catch {
 Start-Sleep -Seconds 15
 
 try {
-  $healthAfter = Invoke-WebRequest -Uri $HealthUrl -Method Get -UseBasicParsing -TimeoutSec 60
+  $healthAfter = Invoke-WebRequest -Uri $resolvedUrls.HealthUrl -Method Get -UseBasicParsing -TimeoutSec 60
   $healthAfter.Content | Out-File -FilePath $healthAfterPath -Encoding utf8
 }
 catch {
@@ -153,9 +214,9 @@ catch {
 }
 
 $azPath = Get-Command az -ErrorAction SilentlyContinue
-if ($azPath) {
+if ($azPath -and ![string]::IsNullOrWhiteSpace($resolvedContainerAppName) -and ![string]::IsNullOrWhiteSpace($resolvedResourceGroup)) {
   try {
-    az containerapp logs show -n mlb0951-aca -g mlb-prod-centralus --tail 200 | Out-File -FilePath $logsPath -Encoding utf8
+    az containerapp logs show --only-show-errors -n $resolvedContainerAppName -g $resolvedResourceGroup --tail 200 | Out-File -FilePath $logsPath -Encoding utf8
   }
   catch {
     $_ | Out-String | Out-File -FilePath $logsPath -Encoding utf8

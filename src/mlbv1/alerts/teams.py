@@ -4,9 +4,9 @@ Supports two modes:
     1. **Graph API** (preferred, zero-config): Uses DefaultAzureCredential
        (managed identity in ACA, az CLI locally) to post Adaptive Cards
        directly to a Teams channel.
-       Requires: TEAMS_GROUP_ID + TEAMS_CHANNEL_ID in .env.
+       Requires: TEAMS_GROUP_ID + TEAMS_CHANNEL_ID in environment config.
     2. **Webhook** (fallback): Posts via Power Automate Workflow webhook.
-       Requires: TEAMS_WEBHOOK_URL in .env.
+       Requires: TEAMS_WEBHOOK_URL in environment config.
 """
 
 from __future__ import annotations

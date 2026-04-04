@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from datetime import UTC, datetime
 from typing import Any
 
@@ -27,7 +26,8 @@ def prepare_live_features_with_history(
 
     Returns (processed_live, feature_live, hist_rows_count).
     """
-    history_days = int(os.getenv("LIVE_CONTEXT_DAYS", "120"))
+    runtime = getattr(config, "runtime", None)
+    history_days = int(getattr(runtime, "live_context_days", 120))
     live = live_df.copy().reset_index(drop=True)
     live["_is_live"] = 1
 
