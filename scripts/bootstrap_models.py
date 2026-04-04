@@ -6,21 +6,17 @@ import argparse
 import logging
 from pathlib import Path
 
-from mlbv1.config import (
-    LightGBMConfig,
-    RandomForestConfig,
-    RidgeRegressionConfig,
-    XGBoostConfig,
-)
+from mlbv1.config import AppConfig
 from mlbv1.data.loader import SyntheticDataLoader
 from mlbv1.data.preprocessor import preprocess, train_test_split_time
 from mlbv1.features.engineer import engineer_features
 from mlbv1.models.trainer import ModelTrainer
+from mlbv1.models.training_helpers import ALL_MODEL_TYPES, get_training_jobs, train_model_safe
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
-REQUIRED_MODELS = ("random_forest", "ridge_regression", "xgboost", "lightgbm")
+REQUIRED_MODELS = ALL_MODEL_TYPES
 
 
 def _missing_models(output_dir: Path) -> list[str]:
@@ -44,24 +40,15 @@ def _train_and_save_models(output_dir: Path, num_games: int) -> list[str]:
     X_train, y_train = _build_training_matrices(num_games=num_games)
 
     trained: list[str] = []
+    config = AppConfig.load()
+    jobs = get_training_jobs(trainer, config)
 
-    jobs = [
-        ("random_forest", trainer.train_random_forest, RandomForestConfig(n_estimators=120, max_depth=8)),
-        ("ridge_regression", trainer.train_ridge_regression, RidgeRegressionConfig(max_iter=1000)),
-        ("xgboost", trainer.train_xgboost, XGBoostConfig(n_estimators=120)),
-        ("lightgbm", trainer.train_lightgbm, LightGBMConfig(n_estimators=120)),
-    ]
-
-    for name, train_fn, cfg in jobs:
-        try:
-            model = train_fn(X_train, y_train, cfg)  # type: ignore[misc]
+    for job in jobs:
+        model = train_model_safe(job, X_train, y_train)
+        if model:
             trainer.save(model)
-            trained.append(name)
-            logger.info("Bootstrapped model: %s", name)
-        except ImportError as exc:
-            logger.warning("Skipping %s bootstrap: %s", name, exc)
-        except Exception as exc:  # pragma: no cover - defensive logging
-            logger.exception("Failed bootstrapping %s: %s", name, exc)
+            trained.append(job.model_type)
+            logger.info("Bootstrapped model: %s", job.model_type)
 
     return trained
 

@@ -23,6 +23,7 @@ from mlbv1.features.engineer import engineer_features
 from mlbv1.metrics import evaluate
 from mlbv1.models.predictor import predict
 from mlbv1.models.trainer import ModelTrainer
+from mlbv1.models.training_helpers import get_training_jobs, resolve_model_types, train_model_safe
 from mlbv1.tracking.database import PredictionRecord, RunRecord, TrackingDB
 
 logging.basicConfig(
@@ -121,7 +122,8 @@ def _fixed_split_backtest(
     test_X = features.X.loc[test_df.index]
 
     trainer = ModelTrainer(output_dir="artifacts/backtest_models")
-    models_to_train = _resolve_model_types(args.model)
+    jobs_by_type = {j.model_type: j for j in get_training_jobs(trainer, config)}
+    models_to_train = resolve_model_types(args.model)
 
     for model_type in models_to_train:
         model_run_id = f"{run_id}-{model_type}"
@@ -132,7 +134,8 @@ def _fixed_split_backtest(
             len(test_X),
         )
 
-        trained = _train_model(trainer, model_type, train_X, train_target, config)
+        job = jobs_by_type.get(model_type)
+        trained = train_model_safe(job, train_X, train_target) if job else None
         if trained is None:
             continue
 
@@ -227,7 +230,8 @@ def _walk_forward_backtest(
     step_days = 7  # retrain weekly
 
     trainer = ModelTrainer(output_dir="artifacts/backtest_models")
-    models_to_train = _resolve_model_types(args.model)
+    jobs_by_type = {j.model_type: j for j in get_training_jobs(trainer, config)}
+    models_to_train = resolve_model_types(args.model)
     all_preds: dict[str, list[tuple[int, int, float]]] = {
         m: [] for m in models_to_train
     }
@@ -248,13 +252,13 @@ def _walk_forward_backtest(
         train_X = X[train_mask]
         train_y = target[train_mask]
         test_X = X[test_mask]
-        target[test_mask]
 
         if len(train_X) < 30 or len(test_X) == 0:
             continue
 
         for model_type in models_to_train:
-            trained = _train_model(trainer, model_type, train_X, train_y, config)
+            job = jobs_by_type.get(model_type)
+            trained = train_model_safe(job, train_X, train_y) if job else None
             if trained is None:
                 continue
             test_full_df = df.loc[test_X.index]
@@ -296,38 +300,6 @@ def _walk_forward_backtest(
                 sharpe=metrics.sharpe_ratio,
             )
         )
-
-
-def _resolve_model_types(model_arg: str) -> list[str]:
-    if model_arg == "all":
-        return ["random_forest", "ridge_regression", "xgboost", "lightgbm"]
-    if model_arg == "both":
-        return ["random_forest", "ridge_regression"]
-    return [model_arg]
-
-
-def _train_model(
-    trainer: ModelTrainer,
-    model_type: str,
-    X: object,
-    y: object,
-    config: AppConfig,
-) -> object | None:
-    import pandas as pd
-
-    assert isinstance(X, pd.DataFrame)
-    assert isinstance(y, (pd.Series, pd.DataFrame))
-
-    if model_type == "random_forest":
-        return trainer.train_random_forest(X, y, config.model.random_forest)
-    if model_type == "ridge_regression":
-        return trainer.train_ridge_regression(X, y, config.model.ridge_regression)
-    if model_type == "xgboost":
-        return trainer.train_xgboost(X, y, config.model.xgboost)
-    if model_type == "lightgbm":
-        return trainer.train_lightgbm(X, y, config.model.lightgbm)
-    logger.warning("Unknown model type: %s", model_type)
-    return None
 
 
 if __name__ == "__main__":
