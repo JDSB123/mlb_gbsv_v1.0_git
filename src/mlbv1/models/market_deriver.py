@@ -23,14 +23,18 @@ class MarketDeriver:
 
         # Helper for a single half (F5 or Full Game)
         def compute_half(home_mu: pd.Series, away_mu: pd.Series, prefix: str):
-            # Team Totals
-            home_tt_line = lines.get(f"{prefix}home_tt", 2.5)  # fallback
-            away_tt_line = lines.get(f"{prefix}away_tt", 2.5)
-            # fillna for games where team totals weren't available from API
+            # Team Totals — use model expected runs as fallback when no market
+            # line exists, so over/under stays ~50/50 instead of biasing.
+            home_tt_line = lines.get(f"{prefix}home_tt")
+            away_tt_line = lines.get(f"{prefix}away_tt")
             if isinstance(home_tt_line, pd.Series):
-                home_tt_line = home_tt_line.fillna(2.5)
+                home_tt_line = home_tt_line.fillna(home_mu)
+            elif home_tt_line is None:
+                home_tt_line = home_mu
             if isinstance(away_tt_line, pd.Series):
-                away_tt_line = away_tt_line.fillna(2.5)
+                away_tt_line = away_tt_line.fillna(away_mu)
+            elif away_tt_line is None:
+                away_tt_line = away_mu
 
             # Poisson SF: P(X > k) = 1 - cdf(k).
             # E.g. TT = 3.5 -> P(X >= 4) -> sf(3)
@@ -46,9 +50,16 @@ class MarketDeriver:
                 away_mu, away_tt_line
             )
 
-            # Game Totals
-            total_line = lines.get(f"{prefix}total_runs", 8.5)
+            # Game Totals — when no market line is available, use the model's
+            # own expected total so over/under probabilities stay ~50/50
+            # rather than biasing toward under with a fixed 8.5 fallback.
             sum_mu = home_mu + away_mu
+            total_line = lines.get(f"{prefix}total_runs")
+            if isinstance(total_line, pd.Series):
+                # Use model total as fallback where market line is missing
+                total_line = total_line.fillna(sum_mu)
+            elif total_line is None:
+                total_line = sum_mu
             results[f"{prefix}over_total_prob"] = prob_over_total(sum_mu, total_line)
 
             # Spread Cover
