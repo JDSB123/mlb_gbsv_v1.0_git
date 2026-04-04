@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import UTC
 from urllib.error import URLError
 from urllib.request import urlopen
 
@@ -20,8 +21,8 @@ def fetch_mlb_standings() -> dict[str, dict[str, int]]:
 
     Returns: {team_abbr: {"wins": W, "losses": L}} or empty dict on failure.
     """
-    from datetime import datetime, timezone
-    season = datetime.now(timezone.utc).year
+    from datetime import datetime
+    season = datetime.now(UTC).year
     url = f"https://statsapi.mlb.com/api/v1/standings?leagueId=103,104&season={season}"
     try:
         with urlopen(url, timeout=15) as resp:  # noqa: S310

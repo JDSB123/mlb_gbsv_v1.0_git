@@ -56,7 +56,7 @@ Deploy MLB spread prediction model to Azure Container Apps with full observabili
 ### **Option 1: One-Command Deployment** (Recommended)
 
 ```powershell
-cd c:\Users\JDSB\dev\mlb_gbsv_local_v1.0
+cd <REPO_ROOT>
 .\scripts\deploy.ps1
 ```
 

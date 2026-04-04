@@ -8,7 +8,7 @@
 
 param(
     [Parameter(Mandatory=$false)]
-    [string]$ResourceGroup = "mlb-gbsv-v2-az-rg",
+    [string]$ResourceGroup = "mlb-gbsv-v1-az-rg",
 
     [Parameter(Mandatory=$false)]
     [string]$Location = "centralus",

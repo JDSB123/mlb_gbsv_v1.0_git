@@ -24,7 +24,7 @@ MLBV1 is a multi-market MLB prediction pipeline using modular data ingestion, 27
 
 ## Requirements
 
-- Python 3.12+
+- Python 3.14+
 
 ## Installation
 
@@ -124,10 +124,10 @@ az deployment group create -g mlb-gbsv-v1-az-rg -f infra/main.bicep
 
 ## Project Layout
 
-```
+```text
 mlb_gbsv_v1.0_git/
   src/mlbv1/        # Core package
-  tests/            # 68 tests
+  tests/            # 100 tests
   scripts/          # CLI scripts (train, predict, daily_run, backtest, tune)
   infra/            # Azure Bicep templates
   artifacts/        # Trained models

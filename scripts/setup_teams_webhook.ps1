@@ -18,9 +18,9 @@ param(
     [ValidatePattern('^https://')]
     [string]$WebhookUrl,
 
-    [string]$ContainerAppName = 'mlb-gbsv-v2-az-aca',
-    [string]$ResourceGroup    = 'mlb-gbsv-v2-az-rg',
-    [string]$KeyVaultName     = 'mlb-gbsv-v2-az-kv'
+    [string]$ContainerAppName = 'mlb-gbsv-v1-az-aca',
+    [string]$ResourceGroup    = 'mlb-gbsv-v1-az-rg',
+    [string]$KeyVaultName     = 'mlb-gbsv-v1-az-kv'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -50,4 +50,4 @@ az containerapp update -n $app -g $rg --set-env-vars "TEAMS_WEBHOOK_URL=secretre
 
 Write-Host ""
 Write-Host "Done! Teams webhook configured." -ForegroundColor Green
-Write-Host "Test with: Invoke-RestMethod -Uri 'https://mlb-gbsv-v2-az-aca.ashyflower-99e95891.centralus.azurecontainerapps.io/trigger' -Method POST -Headers @{'X-Trigger-Key'='<your-key>'}"
+Write-Host "Test with: Invoke-RestMethod -Uri 'https://<YOUR-ACA-FQDN>/trigger' -Method POST -Headers @{'X-Trigger-Key'='<your-key>'}"

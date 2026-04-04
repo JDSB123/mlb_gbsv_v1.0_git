@@ -4,8 +4,8 @@
     Creates (or rebuilds) the .venv, installs all dependencies, and validates.
 
 .DESCRIPTION
-    This script ensures a reproducible Python 3.12 environment:
-      1. Locates Python 3.12 on PATH or common install locations
+    This script ensures a reproducible Python 3.14 environment:
+      1. Locates Python 3.14 on PATH or common install locations
       2. Creates .venv (or rebuilds with --force)
       3. Installs pinned dependencies from requirements-lock.txt
       4. Installs mlbv1 in editable mode with dev extras
@@ -32,20 +32,20 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $repoRoot
 
 $requiredMajor = 3
-$requiredMinor = 12
+$requiredMinor = 14
 
-# ── 1. Find Python 3.12 ─────────────────────────────────────────────────────
-function Find-Python312 {
+# ── 1. Find Python 3.14 ─────────────────────────────────────────────────────
+function Find-Python314 {
     $candidates = @(
-        "python3.12",
+        "python3.14",
         "python3",
         "python"
     )
     # Also check common Windows install paths
     $paths = @(
-        "C:\Program Files\Python312\python.exe",
-        "C:\Python312\python.exe",
-        "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe"
+        "C:\Python314\python.exe",
+        "C:\Program Files\Python314\python.exe",
+        "$env:LOCALAPPDATA\Programs\Python\Python314\python.exe"
     )
     foreach ($p in $paths) {
         if (Test-Path $p) { $candidates = @($p) + $candidates }
@@ -63,7 +63,7 @@ function Find-Python312 {
     return $null
 }
 
-$python = Find-Python312
+$python = Find-Python314
 if (-not $python) {
     Write-Host "ERROR: Python $requiredMajor.$requiredMinor not found." -ForegroundColor Red
     Write-Host "Install from https://www.python.org/downloads/ and ensure it's on PATH." -ForegroundColor Yellow

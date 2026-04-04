@@ -1,5 +1,5 @@
 param(
-  [string]$OutputRoot = $(if ($env:MLBV1_OUTPUT_ROOT) { $env:MLBV1_OUTPUT_ROOT } else { "C:\Users\JDSB\OneDrive - Green Bier Capital\Early Stage Sport Ventures - Documents\MLB - Green Bier Sports" }),
+  [string]$OutputRoot = $(if ($env:MLBV1_OUTPUT_ROOT) { $env:MLBV1_OUTPUT_ROOT } else { Join-Path (Split-Path -Parent $PSScriptRoot) "artifacts" }),
   [string]$TriggerUrl = "",
   [string]$HealthUrl = "",
   [string]$ResourceGroup = "",
