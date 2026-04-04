@@ -34,8 +34,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dashboard = [
-  "streamlit==1.35.0",
-  "plotly==5.22.0",
+  "streamlit>=1.35.0",
+  "plotly>=5.22.0",
 ]
 dev = [
   "pytest>=8.2.1",
