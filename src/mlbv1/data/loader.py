@@ -699,7 +699,7 @@ class WeatherEnricher:
         for _, row in out.iterrows():
             team = str(row.get("home_team", ""))
             try:
-                date_str = pd.Timestamp(row.get("game_date")).strftime("%Y-%m-%d")
+                date_str = pd.Timestamp(str(row.get("game_date", ""))).strftime("%Y-%m-%d")
             except Exception:
                 continue
             if _STADIUM_COORDS.get(team):
@@ -715,7 +715,7 @@ class WeatherEnricher:
         for _, row in out.iterrows():
             team = str(row.get("home_team", ""))
             try:
-                date_str = pd.Timestamp(row.get("game_date")).strftime("%Y-%m-%d")
+                date_str = pd.Timestamp(str(row.get("game_date", ""))).strftime("%Y-%m-%d")
             except Exception:
                 date_str = ""
             weather = cache.get((team, date_str), {})

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import UTC, datetime
+from typing import Any
 
 import pandas as pd
 
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 def prepare_live_features_with_history(
     live_df: pd.DataFrame,
-    config: object,
+    config: Any,
 ) -> tuple[ProcessedData, FeatureSet, int]:
     """Build live prediction features using recent historical context.
 
