@@ -61,7 +61,7 @@ jobs:
             --name deploy-${{ github.run_id }} \
             --resource-group ${{ env.RESOURCE_GROUP }} \
             --template-file infra/main.bicep \
-            --parameters namePrefix=${{ env.NAME_PREFIX }} location=${{ env.LOCATION }} enableRoleAssignments=false
+            --parameters namePrefix=${{ env.NAME_PREFIX }} location=${{ env.LOCATION }} enableRoleAssignments=false acrNameOverride=${{ env.ACR_NAME }}
 
   build-and-push:
     needs: infra
